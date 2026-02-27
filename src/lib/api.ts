@@ -68,3 +68,17 @@ export interface PriceEntry {
   age_s: number;
   stale: boolean;
 }
+
+export interface OrderbookLevel {
+  price: number;
+  size: number;
+}
+
+export interface OrderbookEntry {
+  symbol: string;
+  timeframe: string;
+  direction: string;
+  bids: OrderbookLevel[];
+  asks: OrderbookLevel[];
+  updated_at: string | null;
+}

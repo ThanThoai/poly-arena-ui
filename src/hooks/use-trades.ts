@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { apiFetch, Trade, Bot, BalanceHistory, SchedulerStatus, PriceEntry } from '@/lib/api';
+import { apiFetch, Trade, Bot, BalanceHistory, SchedulerStatus, PriceEntry, OrderbookEntry } from '@/lib/api';
 
 export interface DashboardData {
   trades: Trade[];
@@ -69,4 +69,47 @@ export function usePrices() {
   }, []);
 
   return prices;
+}
+
+/** Dedicated hook for live orderbook depth — polls every 2s. */
+export function useOrderbook(symbol?: string, timeframe?: string) {
+  const [orderbooks, setOrderbooks] = useState<OrderbookEntry[]>([]);
+
+  useEffect(() => {
+    let active = true;
+
+    const fetchOb = async () => {
+      try {
+        const params = new URLSearchParams();
+        if (symbol) params.set('symbol', symbol);
+        if (timeframe) params.set('timeframe', timeframe);
+        const qs = params.toString();
+        const resp = await apiFetch<{ orderbooks: Array<{
+          symbol: string; timeframe: string; direction: string;
+          bids: [number, number][]; asks: [number, number][];
+          updated_at: string | null;
+        }> }>(`/binary-options/engine/orderbook${qs ? `?${qs}` : ''}`);
+        if (active) {
+          setOrderbooks(
+            resp.orderbooks.map((ob) => ({
+              ...ob,
+              bids: ob.bids.map(([price, size]) => ({ price, size })),
+              asks: ob.asks.map(([price, size]) => ({ price, size })),
+            })),
+          );
+        }
+      } catch {
+        // keep previous data on error
+      }
+    };
+
+    fetchOb();
+    const id = setInterval(fetchOb, 2_000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [symbol, timeframe]);
+
+  return orderbooks;
 }

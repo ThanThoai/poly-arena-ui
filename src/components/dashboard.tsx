@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useDashboardData, usePrices } from '@/hooks/use-trades';
+import { useDashboardData } from '@/hooks/use-trades';
 import Header from '@/components/header';
 import KpiCards from '@/components/kpi-cards';
 import BalanceChart from '@/components/balance-chart';
@@ -14,14 +14,12 @@ import RenameBotModal from '@/components/modals/rename-bot-modal';
 import RegisterBoModal from '@/components/modals/register-bo-modal';
 import ApiExampleModal from '@/components/modals/api-example-modal';
 import TradingViewCharts from '@/components/tradingview-charts';
-import PriceTicker from '@/components/price-ticker';
+import OrderbookDepth from '@/components/orderbook-depth';
 import ReportPage from '@/components/report-page';
 import Toast from '@/components/ui/toast';
 
 export default function Dashboard() {
   const { data, loading, error, refresh } = useDashboardData(30_000);
-  const prices = usePrices();
-
   const [showCreateBot, setShowCreateBot] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiKeyData, setApiKeyData] = useState<{ bot_name: string; api_key: string; balance: number } | null>(null);
@@ -100,7 +98,7 @@ export default function Dashboard() {
           )}
 
           <TradingViewCharts />
-          <PriceTicker prices={prices} />
+          <OrderbookDepth />
 
           <PositionsTable trades={trades} bots={bots} />
 

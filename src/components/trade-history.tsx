@@ -4,26 +4,36 @@ import { useState, useMemo } from 'react';
 import { Trade, Bot } from '@/lib/api';
 import { money, pnlCls, parseUTC, dtMs, dtParts, fmtCents } from '@/lib/helpers';
 import SymbolBadge from '@/components/ui/symbol-badge';
-import ResultPill from '@/components/ui/result-pill';
+import ResultPill, { displayResult } from '@/components/ui/result-pill';
 import CustomSelect from '@/components/ui/custom-select';
 import { OrderTypeBadge, BracketBadges, ExitTriggerBadge } from '@/components/ui/order-badges';
+import OrderTraceModal from '@/components/modals/order-trace-modal';
+import type { TradeHistorySettings } from '@/lib/settings-types';
 
 const PAGE_SIZE = 20;
 
 interface TradeHistoryProps {
   trades: Trade[];
   bots: Bot[];
+  initialSettings?: TradeHistorySettings;
+  onSettingsChange?: (s: TradeHistorySettings) => void;
 }
 
-export default function TradeHistory({ trades, bots }: TradeHistoryProps) {
-  const [botFilter, setBotFilter] = useState('');
-  const [symbolFilter, setSymbolFilter] = useState('');
-  const [tfFilter, setTfFilter] = useState('');
-  const [forecastFilter, setForecastFilter] = useState('');
-  const [resultFilter, setResultFilter] = useState('');
+export default function TradeHistory({ trades, bots, initialSettings, onSettingsChange }: TradeHistoryProps) {
+  const [botFilter, setBotFilter] = useState(initialSettings?.botFilter ?? '');
+  const [symbolFilter, setSymbolFilter] = useState(initialSettings?.symbolFilter ?? '');
+  const [tfFilter, setTfFilter] = useState(initialSettings?.tfFilter ?? '');
+  const [typeFilter, setTypeFilter] = useState(initialSettings?.typeFilter ?? '');
+  const [forecastFilter, setForecastFilter] = useState(initialSettings?.forecastFilter ?? '');
+  const [resultFilter, setResultFilter] = useState(initialSettings?.resultFilter ?? '');
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
-  const [historyOpen, setHistoryOpen] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(initialSettings?.open ?? true);
+  const [traceTrade, setTraceTrade] = useState<Trade | null>(null);
+
+  const emitSettings = (patch: Partial<TradeHistorySettings>) => {
+    onSettingsChange?.({ botFilter, symbolFilter, tfFilter, typeFilter, forecastFilter, resultFilter, open: historyOpen, ...patch });
+  };
 
   const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
 
@@ -34,10 +44,11 @@ export default function TradeHistory({ trades, bots }: TradeHistoryProps) {
         (!botFilter || t.bot_name === botFilter) &&
         (!symbolFilter || t.symbol === symbolFilter) &&
         (!tfFilter || t.timeframe === tfFilter) &&
+        (!typeFilter || (typeFilter === 'MARKET' ? t.limit_price == null : t.limit_price != null)) &&
         (!forecastFilter || t.forecast === forecastFilter) &&
-        (!resultFilter || t.result === resultFilter),
+        (!resultFilter || displayResult(t) === resultFilter),
     );
-  }, [trades, botFilter, symbolFilter, tfFilter, forecastFilter, resultFilter]);
+  }, [trades, botFilter, symbolFilter, tfFilter, typeFilter, forecastFilter, resultFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -48,9 +59,11 @@ export default function TradeHistory({ trades, bots }: TradeHistoryProps) {
     setBotFilter('');
     setSymbolFilter('');
     setTfFilter('');
+    setTypeFilter('');
     setForecastFilter('');
     setResultFilter('');
     setCurrentPage(1);
+    emitSettings({ botFilter: '', symbolFilter: '', tfFilter: '', typeFilter: '', forecastFilter: '', resultFilter: '' });
   };
 
   const toggleDetail = (id: number) => {
@@ -81,7 +94,7 @@ export default function TradeHistory({ trades, bots }: TradeHistoryProps) {
     <div className="card overflow-hidden">
       {/* Filter row */}
       <div className="px-5 py-3.5 border-b border-[#1a1a2a] flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-        <button onClick={() => setHistoryOpen(!historyOpen)} className="flex items-center gap-2 shrink-0 group">
+        <button onClick={() => { setHistoryOpen(!historyOpen); emitSettings({ open: !historyOpen }); }} className="flex items-center gap-2 shrink-0 group">
           <span style={{ transform: historyOpen ? '' : 'rotate(-90deg)', transition: 'transform .25s ease', display: 'flex', alignItems: 'center' }}>
             <svg className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -94,7 +107,7 @@ export default function TradeHistory({ trades, bots }: TradeHistoryProps) {
             placeholder="All Bots"
             options={[{ value: '', label: 'All Bots' }, ...botNames.map((n) => ({ value: n, label: n }))]}
             value={botFilter}
-            onChange={(v) => { setBotFilter(v); setCurrentPage(1); }}
+            onChange={(v) => { setBotFilter(v); setCurrentPage(1); emitSettings({ botFilter: v }); }}
             searchable
           />
           <CustomSelect
@@ -107,7 +120,7 @@ export default function TradeHistory({ trades, bots }: TradeHistoryProps) {
               { value: 'XRP', label: '\u2715 XRP' },
             ]}
             value={symbolFilter}
-            onChange={(v) => { setSymbolFilter(v); setCurrentPage(1); }}
+            onChange={(v) => { setSymbolFilter(v); setCurrentPage(1); emitSettings({ symbolFilter: v }); }}
           />
           <CustomSelect
             placeholder="All TF"
@@ -118,17 +131,27 @@ export default function TradeHistory({ trades, bots }: TradeHistoryProps) {
               { value: 'H1', label: '1h' },
             ]}
             value={tfFilter}
-            onChange={(v) => { setTfFilter(v); setCurrentPage(1); }}
+            onChange={(v) => { setTfFilter(v); setCurrentPage(1); emitSettings({ tfFilter: v }); }}
           />
           <CustomSelect
-            placeholder="All"
+            placeholder="All Types"
             options={[
-              { value: '', label: 'All' },
+              { value: '', label: 'All Types' },
+              { value: 'MARKET', label: 'MARKET' },
+              { value: 'LIMIT', label: 'LIMIT' },
+            ]}
+            value={typeFilter}
+            onChange={(v) => { setTypeFilter(v); setCurrentPage(1); emitSettings({ typeFilter: v }); }}
+          />
+          <CustomSelect
+            placeholder="All Forecasts"
+            options={[
+              { value: '', label: 'All Forecasts' },
               { value: 'GREEN', label: '\u25CF GREEN' },
               { value: 'RED', label: '\u25CF RED' },
             ]}
             value={forecastFilter}
-            onChange={(v) => { setForecastFilter(v); setCurrentPage(1); }}
+            onChange={(v) => { setForecastFilter(v); setCurrentPage(1); emitSettings({ forecastFilter: v }); }}
           />
           <CustomSelect
             placeholder="All Results"
@@ -138,9 +161,10 @@ export default function TradeHistory({ trades, bots }: TradeHistoryProps) {
               { value: 'WIN', label: 'WIN' },
               { value: 'LOSS', label: 'LOSS' },
               { value: 'CANCELLED', label: 'CANCELLED' },
+              { value: 'EXPIRED', label: 'EXPIRED' },
             ]}
             value={resultFilter}
-            onChange={(v) => { setResultFilter(v); setCurrentPage(1); }}
+            onChange={(v) => { setResultFilter(v); setCurrentPage(1); emitSettings({ resultFilter: v }); }}
           />
           <button
             onClick={clearFilters}
@@ -216,7 +240,7 @@ export default function TradeHistory({ trades, bots }: TradeHistoryProps) {
                 {vis.length === 0 ? (
                   <tr><td colSpan={13} className="px-5 py-12 text-center text-slate-600">No trades match filters</td></tr>
                 ) : (
-                  vis.map((t) => <TradeRow key={t.id} trade={t} open={expandedRows.has(t.id)} onToggle={() => toggleDetail(t.id)} />)
+                  vis.map((t) => <TradeRow key={t.id} trade={t} open={expandedRows.has(t.id)} onToggle={() => toggleDetail(t.id)} onTrace={() => setTraceTrade(t)} />)
                 )}
               </tbody>
             </table>
@@ -231,11 +255,13 @@ export default function TradeHistory({ trades, bots }: TradeHistoryProps) {
           </div>
         </div>
       </div>
+
+      <OrderTraceModal open={traceTrade !== null} onClose={() => setTraceTrade(null)} trade={traceTrade} />
     </div>
   );
 }
 
-function TradeRow({ trade: t, open, onToggle }: { trade: Trade; open: boolean; onToggle: () => void }) {
+function TradeRow({ trade: t, open, onToggle, onTrace }: { trade: Trade; open: boolean; onToggle: () => void; onTrace: () => void }) {
   const fHtml = t.forecast === 'GREEN'
     ? <span className="font-bold text-emerald-400">&bull; GREEN</span>
     : <span className="font-bold text-rose-400">&bull; RED</span>;
@@ -265,7 +291,7 @@ function TradeRow({ trade: t, open, onToggle }: { trade: Trade; open: boolean; o
         <td className={`px-5 py-2.5 text-right font-mono text-xs ${t.avg_price != null ? 'text-violet-300' : 'text-slate-600'}`}>
           {t.avg_price != null ? fmtCents(t.avg_price) : '\u2014'}
         </td>
-        <td className="px-5 py-2.5">{t.result ? <ResultPill result={t.result} /> : '\u2014'}</td>
+        <td className="px-5 py-2.5">{t.result ? <ResultPill result={t.result} trade={t} /> : '\u2014'}</td>
         <td className="px-5 py-2.5">
           {t.exit_trigger ? (
             <ExitTriggerBadge trade={t} />
@@ -418,6 +444,18 @@ function TradeRow({ trade: t, open, onToggle }: { trade: Trade; open: boolean; o
                   <p className="text-xs text-amber-300/80 leading-relaxed">{t.reason}</p>
                 </div>
               )}
+              {/* Trace button */}
+              <div className="col-span-2 sm:col-span-3 lg:col-span-6 pt-1">
+                <button
+                  onClick={onTrace}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-violet-400 hover:text-violet-300 border border-violet-500/20 hover:border-violet-500/40 hover:bg-violet-500/5 transition-all"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Order Trace
+                </button>
+              </div>
             </div>
           </td>
         </tr>

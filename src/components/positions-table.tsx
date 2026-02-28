@@ -6,27 +6,39 @@ import { BOT_PALETTE, parseUTC, dtMs, dtShort, dtParts, fmtDiff, fmtCents } from
 import SymbolBadge from '@/components/ui/symbol-badge';
 import { OrderTypeBadge, BracketBadges, OrderStatusBadge } from '@/components/ui/order-badges';
 import CustomSelect from '@/components/ui/custom-select';
+import type { PositionsSettings } from '@/lib/settings-types';
 
 interface PositionsTableProps {
   trades: Trade[];
   bots: Bot[];
+  initialSettings?: PositionsSettings;
+  onSettingsChange?: (s: PositionsSettings) => void;
 }
 
-export default function PositionsTable({ trades, bots }: PositionsTableProps) {
-  const [botFilter, setBotFilter] = useState('');
-  const [symbolFilter, setSymbolFilter] = useState('');
-  const [timeframeFilter, setTimeframeFilter] = useState('');
+export default function PositionsTable({ trades, bots, initialSettings, onSettingsChange }: PositionsTableProps) {
+  const [botFilter, setBotFilter] = useState(initialSettings?.botFilter ?? '');
+  const [symbolFilter, setSymbolFilter] = useState(initialSettings?.symbolFilter ?? '');
+  const [timeframeFilter, setTimeframeFilter] = useState(initialSettings?.tfFilter ?? '');
+  const [typeFilter, setTypeFilter] = useState(initialSettings?.typeFilter ?? '');
+  const [forecastFilter, setForecastFilter] = useState(initialSettings?.forecastFilter ?? '');
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [, setTick] = useState(0);
+
+  const emitPositionSettings = (patch: Partial<PositionsSettings>) => {
+    onSettingsChange?.({ botFilter, symbolFilter, tfFilter: timeframeFilter, typeFilter, forecastFilter, ...patch });
+  };
 
   const pending = useMemo(() => trades.filter((t) => t.result === 'PENDING'), [trades]);
   const filtered = useMemo(() => pending.filter((t) => {
     if (botFilter && t.bot_name !== botFilter) return false;
     if (symbolFilter && t.symbol !== symbolFilter) return false;
     if (timeframeFilter && t.timeframe !== timeframeFilter) return false;
+    if (typeFilter === 'MARKET' && t.limit_price != null) return false;
+    if (typeFilter === 'LIMIT' && t.limit_price == null) return false;
+    if (forecastFilter && t.forecast !== forecastFilter) return false;
     return true;
-  }), [pending, botFilter, symbolFilter, timeframeFilter]);
+  }), [pending, botFilter, symbolFilter, timeframeFilter, typeFilter, forecastFilter]);
   const sorted = useMemo(
     () => [...filtered].sort((a, b) => (parseUTC(a.settlement_at)?.getTime() ?? 0) - (parseUTC(b.settlement_at)?.getTime() ?? 0)),
     [filtered],
@@ -40,8 +52,8 @@ export default function PositionsTable({ trades, bots }: PositionsTableProps) {
   const start = (safePage - 1) * PAGE_SIZE;
   const paged = sorted.slice(start, start + PAGE_SIZE);
 
-  const hasActiveFilter = botFilter !== '' || symbolFilter !== '' || timeframeFilter !== '';
-  const clearFilters = () => { setBotFilter(''); setSymbolFilter(''); setTimeframeFilter(''); setCurrentPage(1); };
+  const hasActiveFilter = botFilter !== '' || symbolFilter !== '' || timeframeFilter !== '' || typeFilter !== '' || forecastFilter !== '';
+  const clearFilters = () => { setBotFilter(''); setSymbolFilter(''); setTimeframeFilter(''); setTypeFilter(''); setForecastFilter(''); setCurrentPage(1); onSettingsChange?.({ botFilter: '', symbolFilter: '', tfFilter: '', typeFilter: '', forecastFilter: '' }); };
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
@@ -76,7 +88,7 @@ export default function PositionsTable({ trades, bots }: PositionsTableProps) {
             placeholder="All Bots"
             options={[{ value: '', label: 'All Bots' }, ...botNames.map((n) => ({ value: n, label: n }))]}
             value={botFilter}
-            onChange={setBotFilter}
+            onChange={(v) => { setBotFilter(v); emitPositionSettings({ botFilter: v }); }}
             searchable
           />
           <CustomSelect
@@ -89,7 +101,7 @@ export default function PositionsTable({ trades, bots }: PositionsTableProps) {
               { value: 'XRP', label: '✕ XRP' },
             ]}
             value={symbolFilter}
-            onChange={setSymbolFilter}
+            onChange={(v) => { setSymbolFilter(v); emitPositionSettings({ symbolFilter: v }); }}
           />
           <CustomSelect
             placeholder="All TF"
@@ -100,7 +112,27 @@ export default function PositionsTable({ trades, bots }: PositionsTableProps) {
               { value: 'H1', label: '1h' },
             ]}
             value={timeframeFilter}
-            onChange={setTimeframeFilter}
+            onChange={(v) => { setTimeframeFilter(v); emitPositionSettings({ tfFilter: v }); }}
+          />
+          <CustomSelect
+            placeholder="All Types"
+            options={[
+              { value: '', label: 'All Types' },
+              { value: 'MARKET', label: 'MARKET' },
+              { value: 'LIMIT', label: 'LIMIT' },
+            ]}
+            value={typeFilter}
+            onChange={(v) => { setTypeFilter(v); emitPositionSettings({ typeFilter: v }); }}
+          />
+          <CustomSelect
+            placeholder="All Forecasts"
+            options={[
+              { value: '', label: 'All Forecasts' },
+              { value: 'GREEN', label: '\u25CF GREEN' },
+              { value: 'RED', label: '\u25CF RED' },
+            ]}
+            value={forecastFilter}
+            onChange={(v) => { setForecastFilter(v); emitPositionSettings({ forecastFilter: v }); }}
           />
           {hasActiveFilter && (
             <button

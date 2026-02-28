@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Chart as ChartJS,
   RadialLinearScale,
@@ -41,7 +41,6 @@ function getICTSession(utcHour: number): string {
   return 'Off-hours';
 }
 
-/** Convert a UTC hour (0–24) to local hour string HH:00 */
 function utcHourToLocal(utcH: number): string {
   const d = new Date();
   d.setUTCHours(utcH % 24, 0, 0, 0);
@@ -56,6 +55,377 @@ function localOffsetLabel(): string {
   return `UTC${sign}${h}${m ? ':' + String(m).padStart(2, '0') : ''}`;
 }
 
+/* ── Stat computation helpers ── */
+
+interface BotStats {
+  wins: number;
+  losses: number;
+  cancelled: number;
+  total: number;
+  wr: string;
+  pnl: number;
+  avg: number;
+  wlRatio: string;
+}
+
+function computeBotStats(settled: Trade[]): BotStats {
+  const wins = settled.filter((t) => t.result === 'WIN').length;
+  const losses = settled.filter((t) => t.result === 'LOSS').length;
+  const cancelled = settled.filter((t) => t.result === 'CANCELLED').length;
+  const total = settled.length;
+  const wr = total - cancelled > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '—';
+  const pnl = settled.reduce((s, t) => s + (t.profit || 0), 0);
+  const avg = wins + losses > 0 ? pnl / (wins + losses) : 0;
+  const wlRatio = losses > 0 ? (wins / losses).toFixed(2) : wins > 0 ? '∞' : '—';
+  return { wins, losses, cancelled, total, wr, pnl, avg, wlRatio };
+}
+
+interface DayRow { date: string; wins: number; losses: number; cancelled: number; total: number; wr: string }
+
+function computeByDay(settled: Trade[]): DayRow[] {
+  const map: Record<string, { wins: number; losses: number; cancelled: number }> = {};
+  settled.forEach((t) => {
+    const d = parseUTC(t.created_at);
+    if (!d) return;
+    const key = d.toISOString().slice(0, 10);
+    if (!map[key]) map[key] = { wins: 0, losses: 0, cancelled: 0 };
+    if (t.result === 'WIN') map[key].wins++;
+    else if (t.result === 'LOSS') map[key].losses++;
+    else map[key].cancelled++;
+  });
+  return Object.entries(map)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([date, v]) => ({ date, ...v, total: v.wins + v.losses, wr: v.wins + v.losses > 0 ? ((v.wins / (v.wins + v.losses)) * 100).toFixed(1) + '%' : '—' }));
+}
+
+interface SessionRow { label: string; hours: string; wins: number; losses: number; cancelled: number; total: number; wr: string }
+
+function computeBySession(settled: Trade[]): SessionRow[] {
+  const map: Record<string, { wins: number; losses: number; cancelled: number }> = {};
+  ICT_SESSIONS.forEach((s) => (map[s.label] = { wins: 0, losses: 0, cancelled: 0 }));
+  settled.forEach((t) => {
+    const d = parseUTC(t.created_at);
+    if (!d) return;
+    const session = getICTSession(d.getUTCHours());
+    if (t.result === 'WIN') map[session].wins++;
+    else if (t.result === 'LOSS') map[session].losses++;
+    else map[session].cancelled++;
+  });
+  return ICT_SESSIONS.map((s) => {
+    const v = map[s.label];
+    const tot = v.wins + v.losses;
+    return { label: s.label, hours: `${utcHourToLocal(s.fromUTC)}–${utcHourToLocal(s.toUTC)}`, ...v, total: tot, wr: tot > 0 ? ((v.wins / tot) * 100).toFixed(1) + '%' : '—' };
+  });
+}
+
+interface TfRow { tf: string; wins: number; losses: number; total: number; pnl: number; wr: string }
+
+function computeByTimeframe(settled: Trade[]): TfRow[] {
+  return ['M5', 'M15', 'H1'].map((tf) => {
+    const sub = settled.filter((t) => t.timeframe === tf);
+    const w = sub.filter((t) => t.result === 'WIN').length;
+    const l = sub.filter((t) => t.result === 'LOSS').length;
+    const tot = w + l;
+    const p = sub.reduce((s, t) => s + (t.profit || 0), 0);
+    return { tf, wins: w, losses: l, total: tot, pnl: p, wr: tot > 0 ? ((w / tot) * 100).toFixed(1) + '%' : '—' };
+  });
+}
+
+function computeRadarData(settled: Trade[]): number[] {
+  const data: number[] = [];
+  for (const sym of RADAR_SYMS) {
+    for (const tf of RADAR_TFS) {
+      const sub = settled.filter((t) => t.symbol === sym && t.timeframe === tf.val);
+      const w = sub.filter((t) => t.result === 'WIN').length;
+      data.push(sub.length ? +((w / sub.length) * 100).toFixed(1) : 0);
+    }
+  }
+  return data;
+}
+
+const radarLabels: string[] = [];
+for (const sym of RADAR_SYMS) for (const tf of RADAR_TFS) radarLabels.push(`${sym}\u00B7${tf.label}`);
+
+const RADAR_OPTIONS: ChartOptions<'radar'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: { display: true, labels: { color: '#94a3b8', font: { size: 10 } } },
+    tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${c.raw}%` } },
+  },
+  scales: {
+    r: {
+      min: 0,
+      max: 100,
+      ticks: { stepSize: 25, display: false },
+      grid: { color: '#1f1f32' },
+      angleLines: { color: '#1f1f32' },
+      pointLabels: { color: '#64748b', font: { size: 10 } },
+    },
+  },
+};
+
+/* ── Per-bot computed data bundle ── */
+
+interface BotCompareData {
+  name: string;
+  color: string;
+  stats: BotStats;
+  byDay: DayRow[];
+  bySession: SessionRow[];
+  byTf: TfRow[];
+  radarData: number[];
+}
+
+/* ── Multi-bot Compare View ── */
+
+function CompareView({ botsData }: { botsData: BotCompareData[] }) {
+  const n = botsData.length;
+
+  // KPI rows — highlight the best value in each metric
+  const kpiMetrics: { label: string; values: string[]; numericValues: number[]; higherIsBetter: boolean }[] = [
+    {
+      label: 'Win Rate',
+      values: botsData.map((b) => b.stats.wr === '—' ? '—' : b.stats.wr + '%'),
+      numericValues: botsData.map((b) => b.stats.wr === '—' ? -Infinity : parseFloat(b.stats.wr)),
+      higherIsBetter: true,
+    },
+    {
+      label: 'Total Trades',
+      values: botsData.map((b) => String(b.stats.total)),
+      numericValues: botsData.map((b) => b.stats.total),
+      higherIsBetter: true,
+    },
+    {
+      label: 'P&L',
+      values: botsData.map((b) => money(b.stats.pnl)),
+      numericValues: botsData.map((b) => b.stats.pnl),
+      higherIsBetter: true,
+    },
+    {
+      label: 'Avg / Trade',
+      values: botsData.map((b) => money(b.stats.avg)),
+      numericValues: botsData.map((b) => b.stats.avg),
+      higherIsBetter: true,
+    },
+    {
+      label: 'W/L Ratio',
+      values: botsData.map((b) => b.stats.wlRatio),
+      numericValues: botsData.map((b) => b.stats.wlRatio === '∞' ? 999 : b.stats.wlRatio === '—' ? -Infinity : parseFloat(b.stats.wlRatio)),
+      higherIsBetter: true,
+    },
+  ];
+
+  // Merge all dates across bots
+  const allDates = useMemo(() => {
+    const set = new Set<string>();
+    botsData.forEach((b) => b.byDay.forEach((r) => set.add(r.date)));
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [botsData]);
+
+  return (
+    <>
+      {/* KPI Comparison Table */}
+      <div className="card overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#1a1a2a]">
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">KPI Comparison</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
+                <th className="px-4 py-2 text-left font-medium">Metric</th>
+                {botsData.map((b) => (
+                  <th key={b.name} className="px-4 py-2 text-right font-medium whitespace-nowrap">
+                    <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: b.color }} />
+                    {b.name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {kpiMetrics.map((m) => {
+                const best = Math.max(...m.numericValues.filter((v) => v !== -Infinity));
+                const hasBest = m.numericValues.filter((v) => v === best).length === 1 && best !== -Infinity;
+                return (
+                  <tr key={m.label} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
+                    <td className="px-4 py-2 text-slate-400 font-medium">{m.label}</td>
+                    {m.values.map((v, i) => (
+                      <td key={i} className={`px-4 py-2 text-right font-semibold ${hasBest && m.numericValues[i] === best ? 'text-emerald-400' : 'text-slate-200'}`}>
+                        {v}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* By Timeframe comparison */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {['M5', 'M15', 'H1'].map((tf, tfIdx) => (
+          <div key={tf} className="card p-4">
+            <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">
+              {tf === 'M5' ? '5 min' : tf === 'M15' ? '15 min' : '1 hour'}
+            </div>
+            <div className="space-y-2 text-xs">
+              {botsData.map((b) => {
+                const row = b.byTf[tfIdx];
+                return (
+                  <div key={b.name} className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: b.color }} />
+                      <span className="truncate">{b.name}</span>
+                    </span>
+                    <span className="shrink-0 ml-2">
+                      <span className="text-emerald-400">{row.wins}W</span>{' '}
+                      <span className="text-rose-400">{row.losses}L</span>{' '}
+                      <span className="text-slate-400 font-semibold ml-1">{row.wr}</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Radar overlay */}
+      {botsData.some((b) => b.radarData.some((v) => v > 0)) && (
+        <div className="card p-5">
+          <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest mb-4">
+            Win Rate by Symbol &times; Timeframe
+          </h3>
+          <div style={{ height: 320, position: 'relative' }}>
+            <Radar
+              data={{
+                labels: radarLabels,
+                datasets: botsData.map((b) => ({
+                  label: b.name,
+                  data: b.radarData,
+                  borderColor: b.color,
+                  backgroundColor: b.color + '22',
+                  borderWidth: 1.5,
+                  pointRadius: 3,
+                  pointBackgroundColor: b.color,
+                  pointBorderColor: b.color,
+                })),
+              }}
+              options={RADAR_OPTIONS}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* By Day comparison */}
+      <div className="card overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#1a1a2a]">
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">By Day</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
+                <th className="px-4 py-2 text-left font-medium" rowSpan={2}>Date</th>
+                {botsData.map((b) => (
+                  <th key={b.name} className="px-2 py-2 text-right font-medium whitespace-nowrap" colSpan={2}>
+                    <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: b.color }} />
+                    {b.name}
+                  </th>
+                ))}
+              </tr>
+              <tr className="text-[10px] text-slate-600 border-b border-[#1a1a2a] uppercase tracking-wide">
+                {botsData.map((b) => (
+                  <React.Fragment key={b.name}>
+                    <th className="px-2 py-1 text-right font-medium">W/L</th>
+                    <th className="px-2 py-1 text-right font-medium">WR</th>
+                  </React.Fragment>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {allDates.length === 0 ? (
+                <tr><td colSpan={1 + n * 2} className="px-4 py-6 text-center text-slate-600">No data</td></tr>
+              ) : allDates.map((date) => (
+                <tr key={date} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
+                  <td className="px-4 py-2 text-slate-300 font-mono">{date}</td>
+                  {botsData.map((b) => {
+                    const row = b.byDay.find((r) => r.date === date);
+                    return (
+                      <React.Fragment key={b.name}>
+                        <td className="px-2 py-2 text-right">
+                          {row ? <><span className="text-emerald-400">{row.wins}</span>/<span className="text-rose-400">{row.losses}</span></> : <span className="text-slate-600">—</span>}
+                        </td>
+                        <td className="px-2 py-2 text-right text-slate-200">{row?.wr ?? '—'}</td>
+                      </React.Fragment>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* By ICT Session comparison */}
+      <div className="card overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#1a1a2a]">
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">By ICT Session</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
+                <th className="px-4 py-2 text-left font-medium" rowSpan={2}>Session</th>
+                <th className="px-4 py-2 text-left font-medium" rowSpan={2}>Hours</th>
+                {botsData.map((b) => (
+                  <th key={b.name} className="px-2 py-2 text-right font-medium whitespace-nowrap" colSpan={2}>
+                    <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: b.color }} />
+                    {b.name}
+                  </th>
+                ))}
+              </tr>
+              <tr className="text-[10px] text-slate-600 border-b border-[#1a1a2a] uppercase tracking-wide">
+                {botsData.map((b) => (
+                  <React.Fragment key={b.name}>
+                    <th className="px-2 py-1 text-right font-medium">W/L</th>
+                    <th className="px-2 py-1 text-right font-medium">WR</th>
+                  </React.Fragment>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {ICT_SESSIONS.map((s, sIdx) => (
+                <tr key={s.label} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
+                  <td className="px-4 py-2 text-slate-300 font-semibold">{s.label}</td>
+                  <td className="px-4 py-2 text-slate-500 font-mono text-[10px]">
+                    {utcHourToLocal(s.fromUTC)}–{utcHourToLocal(s.toUTC)}
+                  </td>
+                  {botsData.map((b) => {
+                    const row = b.bySession[sIdx];
+                    return (
+                      <React.Fragment key={b.name}>
+                        <td className="px-2 py-2 text-right">
+                          <span className="text-emerald-400">{row.wins}</span>/<span className="text-rose-400">{row.losses}</span>
+                        </td>
+                        <td className="px-2 py-2 text-right text-slate-200">{row.wr}</td>
+                      </React.Fragment>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ── Main Report Page ── */
+
 interface ReportPageProps {
   trades: Trade[];
   bots: Bot[];
@@ -64,6 +434,8 @@ interface ReportPageProps {
 export default function ReportPage({ trades, bots }: ReportPageProps) {
   const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
   const [selectedBot, setSelectedBot] = useState('');
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareBots, setCompareBots] = useState<string[]>([]);
 
   const botTrades = useMemo(
     () => (selectedBot ? trades.filter((t) => t.bot_name === selectedBot) : []),
@@ -71,84 +443,26 @@ export default function ReportPage({ trades, bots }: ReportPageProps) {
   );
   const settled = useMemo(() => botTrades.filter((t) => t.result !== 'PENDING'), [botTrades]);
 
-  // KPIs
-  const wins = settled.filter((t) => t.result === 'WIN').length;
-  const losses = settled.filter((t) => t.result === 'LOSS').length;
-  const cancelled = settled.filter((t) => t.result === 'CANCELLED').length;
-  const total = settled.length;
-  const wr = total - cancelled > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '—';
-  const pnl = settled.reduce((s, t) => s + (t.profit || 0), 0);
-  const avg = wins + losses > 0 ? pnl / (wins + losses) : 0;
+  // KPIs (single-bot mode)
+  const stats = useMemo(() => computeBotStats(settled), [settled]);
 
   // By Day
-  const byDay = useMemo(() => {
-    const map: Record<string, { wins: number; losses: number; cancelled: number }> = {};
-    settled.forEach((t) => {
-      const d = parseUTC(t.created_at);
-      if (!d) return;
-      const key = d.toISOString().slice(0, 10);
-      if (!map[key]) map[key] = { wins: 0, losses: 0, cancelled: 0 };
-      if (t.result === 'WIN') map[key].wins++;
-      else if (t.result === 'LOSS') map[key].losses++;
-      else map[key].cancelled++;
-    });
-    return Object.entries(map)
-      .sort(([a], [b]) => b.localeCompare(a))
-      .map(([date, v]) => ({ date, ...v, total: v.wins + v.losses, wr: v.wins + v.losses > 0 ? ((v.wins / (v.wins + v.losses)) * 100).toFixed(1) + '%' : '—' }));
-  }, [settled]);
+  const byDay = useMemo(() => computeByDay(settled), [settled]);
 
   // By ICT Session
-  const bySession = useMemo(() => {
-    const map: Record<string, { wins: number; losses: number; cancelled: number }> = {};
-    ICT_SESSIONS.forEach((s) => (map[s.label] = { wins: 0, losses: 0, cancelled: 0 }));
-    settled.forEach((t) => {
-      const d = parseUTC(t.created_at);
-      if (!d) return;
-      const session = getICTSession(d.getUTCHours());
-      if (t.result === 'WIN') map[session].wins++;
-      else if (t.result === 'LOSS') map[session].losses++;
-      else map[session].cancelled++;
-    });
-    return ICT_SESSIONS.map((s) => {
-      const v = map[s.label];
-      const tot = v.wins + v.losses;
-      return { label: s.label, hours: `${utcHourToLocal(s.fromUTC)}–${utcHourToLocal(s.toUTC)}`, ...v, total: tot, wr: tot > 0 ? ((v.wins / tot) * 100).toFixed(1) + '%' : '—' };
-    });
-  }, [settled]);
+  const bySession = useMemo(() => computeBySession(settled), [settled]);
 
   // By Timeframe
-  const byTimeframe = useMemo(() => {
-    return ['M5', 'M15', 'H1'].map((tf) => {
-      const sub = settled.filter((t) => t.timeframe === tf);
-      const w = sub.filter((t) => t.result === 'WIN').length;
-      const l = sub.filter((t) => t.result === 'LOSS').length;
-      const tot = w + l;
-      const p = sub.reduce((s, t) => s + (t.profit || 0), 0);
-      return { tf, wins: w, losses: l, total: tot, pnl: p, wr: tot > 0 ? ((w / tot) * 100).toFixed(1) + '%' : '—' };
-    });
-  }, [settled]);
+  const byTimeframe = useMemo(() => computeByTimeframe(settled), [settled]);
 
   // Radar
-  const radarLabels: string[] = [];
-  for (const sym of RADAR_SYMS) for (const tf of RADAR_TFS) radarLabels.push(`${sym}\u00B7${tf.label}`);
-
   const botColor = selectedBot
     ? BOT_PALETTE[botNames.indexOf(selectedBot) % BOT_PALETTE.length]
     : '#7b9fff';
 
-  const radarData = useMemo(() => {
-    const data: number[] = [];
-    for (const sym of RADAR_SYMS) {
-      for (const tf of RADAR_TFS) {
-        const sub = settled.filter((t) => t.symbol === sym && t.timeframe === tf.val);
-        const w = sub.filter((t) => t.result === 'WIN').length;
-        data.push(sub.length ? +((w / sub.length) * 100).toFixed(1) : 0);
-      }
-    }
-    return data;
-  }, [settled]);
+  const radarData = useMemo(() => computeRadarData(settled), [settled]);
 
-  const radarOptions: ChartOptions<'radar'> = {
+  const singleRadarOptions: ChartOptions<'radar'> = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
@@ -177,150 +491,271 @@ export default function ReportPage({ trades, bots }: ReportPageProps) {
     [bots, selectedBot],
   );
 
+  // Compare mode — compute data for each selected bot
+  const botsCompareData: BotCompareData[] = useMemo(() => {
+    if (!compareMode) return [];
+    return compareBots.map((name) => {
+      const botSettled = trades.filter((t) => t.bot_name === name && t.result !== 'PENDING');
+      const color = BOT_PALETTE[botNames.indexOf(name) % BOT_PALETTE.length];
+      return {
+        name,
+        color,
+        stats: computeBotStats(botSettled),
+        byDay: computeByDay(botSettled),
+        bySession: computeBySession(botSettled),
+        byTf: computeByTimeframe(botSettled),
+        radarData: computeRadarData(botSettled),
+      };
+    });
+  }, [compareMode, compareBots, trades, botNames]);
+
+  // Bots available to add in compare mode (not already selected)
+  const availableForCompare = useMemo(
+    () => botNames.filter((n) => !compareBots.includes(n)),
+    [botNames, compareBots],
+  );
+
+  const handleEnterCompare = () => {
+    setCompareMode(true);
+    setCompareBots(selectedBot ? [selectedBot] : botNames.length > 0 ? [botNames[0]] : []);
+  };
+
+  const handleExitCompare = () => {
+    setCompareMode(false);
+    setCompareBots([]);
+  };
+
+  const addCompareBot = (name: string) => {
+    if (name && !compareBots.includes(name)) {
+      setCompareBots([...compareBots, name]);
+    }
+  };
+
+  const removeCompareBot = (name: string) => {
+    setCompareBots(compareBots.filter((b) => b !== name));
+  };
+
   return (
     <main className="max-w-[1900px] mx-auto px-5 py-5 space-y-5">
-      {/* Bot Selector */}
-      <div className="card p-4 flex items-center gap-3">
-        <span className="text-xs text-slate-500 uppercase tracking-widest font-semibold">Report for</span>
-        <CustomSelect
-          placeholder="Select a bot"
-          options={[{ value: '', label: 'All Bots' }, ...botNames.map((n) => ({ value: n, label: n }))]}
-          value={selectedBot}
-          onChange={setSelectedBot}
-          searchable
-          minWidth="180px"
-        />
-      </div>
-
-      {/* KPI Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <KpiCard label="Win Rate" value={wr === '—' ? '—' : wr + '%'} cls="text-emerald-400" />
-        <KpiCard label="Total Trades" value={String(total)} sub={`${wins}W / ${losses}L / ${cancelled}C`} cls="text-slate-200" />
-        <KpiCard label="P&L" value={money(pnl)} cls={pnlCls(pnl)} />
-        <KpiCard label="Avg / Trade" value={money(avg)} cls={pnlCls(avg)} />
-        <KpiCard label="Win / Loss" value={losses > 0 ? (wins / losses).toFixed(2) : wins > 0 ? '∞' : '—'} cls="text-sky-400" />
-      </div>
-
-      {/* Two columns: By Day | By ICT Session */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* By Day */}
-        <div className="card overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#1a1a2a]">
-            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">By Day</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
-                  <th className="px-4 py-2 text-left font-medium">Date</th>
-                  <th className="px-4 py-2 text-right font-medium">W</th>
-                  <th className="px-4 py-2 text-right font-medium">L</th>
-                  <th className="px-4 py-2 text-right font-medium">C</th>
-                  <th className="px-4 py-2 text-right font-medium">WR</th>
-                </tr>
-              </thead>
-              <tbody>
-                {byDay.length === 0 ? (
-                  <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-600">No data</td></tr>
-                ) : byDay.map((r) => (
-                  <tr key={r.date} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
-                    <td className="px-4 py-2 text-slate-300 font-mono">{r.date}</td>
-                    <td className="px-4 py-2 text-right text-emerald-400">{r.wins}</td>
-                    <td className="px-4 py-2 text-right text-rose-400">{r.losses}</td>
-                    <td className="px-4 py-2 text-right text-slate-500">{r.cancelled}</td>
-                    <td className="px-4 py-2 text-right font-semibold text-slate-200">{r.wr}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* By ICT Session */}
-        <div className="card overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#1a1a2a]">
-            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">By ICT Session</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
-                  <th className="px-4 py-2 text-left font-medium">Session</th>
-                  <th className="px-4 py-2 text-left font-medium">Hours ({localOffsetLabel()})</th>
-                  <th className="px-4 py-2 text-right font-medium">W</th>
-                  <th className="px-4 py-2 text-right font-medium">L</th>
-                  <th className="px-4 py-2 text-right font-medium">WR</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bySession.map((r) => (
-                  <tr key={r.label} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
-                    <td className="px-4 py-2 text-slate-300 font-semibold">{r.label}</td>
-                    <td className="px-4 py-2 text-slate-500 font-mono text-[10px]">{r.hours}</td>
-                    <td className="px-4 py-2 text-right text-emerald-400">{r.wins}</td>
-                    <td className="px-4 py-2 text-right text-rose-400">{r.losses}</td>
-                    <td className="px-4 py-2 text-right font-semibold text-slate-200">{r.wr}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* By Timeframe */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {byTimeframe.map((tf) => (
-          <div key={tf.tf} className="card p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">{tf.tf === 'M5' ? '5 min' : tf.tf === 'M15' ? '15 min' : '1 hour'}</span>
-              <span className="text-sm font-bold text-slate-200">{tf.wr}</span>
-            </div>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="text-emerald-400">{tf.wins}W</span>
-              <span className="text-rose-400">{tf.losses}L</span>
-              <span className="text-slate-500">{tf.total} total</span>
-              <span className={`ml-auto font-semibold ${pnlCls(tf.pnl)}`}>{money(tf.pnl)}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Radar Chart */}
-      {selectedBot && settled.length > 0 && (
-        <div className="card p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-2 h-2 rounded-full" style={{ background: botColor }} />
-            <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">
-              Win Rate by Symbol &times; Timeframe
-            </h3>
-          </div>
-          <div style={{ height: 320, position: 'relative' }}>
-            <Radar
-              data={{
-                labels: radarLabels,
-                datasets: [{
-                  label: selectedBot,
-                  data: radarData,
-                  borderColor: botColor,
-                  backgroundColor: botColor + '22',
-                  borderWidth: 1.5,
-                  pointRadius: 3,
-                  pointBackgroundColor: botColor,
-                  pointBorderColor: botColor,
-                }],
-              }}
-              options={radarOptions}
+      {/* Header Bar */}
+      <div className="card p-4 flex items-center gap-3 flex-wrap">
+        {!compareMode ? (
+          <>
+            <span className="text-xs text-slate-500 uppercase tracking-widest font-semibold">Report for</span>
+            <CustomSelect
+              placeholder="Select a bot"
+              options={[{ value: '', label: 'All Bots' }, ...botNames.map((n) => ({ value: n, label: n }))]}
+              value={selectedBot}
+              onChange={setSelectedBot}
+              searchable
+              minWidth="180px"
             />
-          </div>
-        </div>
+            {botNames.length >= 2 && (
+              <button
+                onClick={handleEnterCompare}
+                className="ml-auto px-3 py-1.5 text-xs font-semibold rounded-md border border-[#2a2a3e] text-slate-400 hover:text-slate-200 hover:border-[#3a3a5e] transition-colors"
+              >
+                Compare
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="text-xs text-slate-500 uppercase tracking-widest font-semibold shrink-0">Compare</span>
+
+            {/* Selected bot chips */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {compareBots.map((name) => (
+                <span
+                  key={name}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border border-[#2a2a3e] text-slate-300"
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ background: BOT_PALETTE[botNames.indexOf(name) % BOT_PALETTE.length] }}
+                  />
+                  {name}
+                  <button
+                    onClick={() => removeCompareBot(name)}
+                    className="ml-0.5 text-slate-500 hover:text-slate-200 transition-colors"
+                  >
+                    &times;
+                  </button>
+                </span>
+              ))}
+
+              {/* Add bot dropdown */}
+              {availableForCompare.length > 0 && (
+                <CustomSelect
+                  placeholder="+ Add bot"
+                  options={availableForCompare.map((n) => ({ value: n, label: n }))}
+                  value=""
+                  onChange={(val) => addCompareBot(val)}
+                  searchable
+                  minWidth="130px"
+                />
+              )}
+            </div>
+
+            <button
+              onClick={handleExitCompare}
+              className="ml-auto px-3 py-1.5 text-xs font-semibold rounded-md border border-[#2a2a3e] text-slate-400 hover:text-slate-200 hover:border-[#3a3a5e] transition-colors shrink-0"
+            >
+              Exit Compare
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Compare Mode */}
+      {compareMode && (
+        <>
+          {botsCompareData.length >= 2 ? (
+            <CompareView botsData={botsCompareData} />
+          ) : (
+            <div className="card p-8 text-center text-slate-500 text-sm">
+              Select at least 2 bots to compare their performance
+            </div>
+          )}
+        </>
       )}
 
-      {/* Open Positions */}
-      <PositionsTable trades={filteredTrades} bots={filteredBots} />
+      {/* Single-bot mode */}
+      {!compareMode && (
+        <>
+          {/* KPI Row */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <KpiCard label="Win Rate" value={stats.wr === '—' ? '—' : stats.wr + '%'} cls="text-emerald-400" />
+            <KpiCard label="Total Trades" value={String(stats.total)} sub={`${stats.wins}W / ${stats.losses}L / ${stats.cancelled}C`} cls="text-slate-200" />
+            <KpiCard label="P&L" value={money(stats.pnl)} cls={pnlCls(stats.pnl)} />
+            <KpiCard label="Avg / Trade" value={money(stats.avg)} cls={pnlCls(stats.avg)} />
+            <KpiCard label="Win / Loss" value={stats.wlRatio} cls="text-sky-400" />
+          </div>
 
-      {/* Trade History */}
-      <TradeHistory trades={filteredTrades} bots={filteredBots} />
+          {/* Two columns: By Day | By ICT Session */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* By Day */}
+            <div className="card overflow-hidden">
+              <div className="px-4 py-3 border-b border-[#1a1a2a]">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">By Day</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
+                      <th className="px-4 py-2 text-left font-medium">Date</th>
+                      <th className="px-4 py-2 text-right font-medium">W</th>
+                      <th className="px-4 py-2 text-right font-medium">L</th>
+                      <th className="px-4 py-2 text-right font-medium">C</th>
+                      <th className="px-4 py-2 text-right font-medium">WR</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {byDay.length === 0 ? (
+                      <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-600">No data</td></tr>
+                    ) : byDay.map((r) => (
+                      <tr key={r.date} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
+                        <td className="px-4 py-2 text-slate-300 font-mono">{r.date}</td>
+                        <td className="px-4 py-2 text-right text-emerald-400">{r.wins}</td>
+                        <td className="px-4 py-2 text-right text-rose-400">{r.losses}</td>
+                        <td className="px-4 py-2 text-right text-slate-500">{r.cancelled}</td>
+                        <td className="px-4 py-2 text-right font-semibold text-slate-200">{r.wr}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* By ICT Session */}
+            <div className="card overflow-hidden">
+              <div className="px-4 py-3 border-b border-[#1a1a2a]">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">By ICT Session</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
+                      <th className="px-4 py-2 text-left font-medium">Session</th>
+                      <th className="px-4 py-2 text-left font-medium">Hours ({localOffsetLabel()})</th>
+                      <th className="px-4 py-2 text-right font-medium">W</th>
+                      <th className="px-4 py-2 text-right font-medium">L</th>
+                      <th className="px-4 py-2 text-right font-medium">WR</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bySession.map((r) => (
+                      <tr key={r.label} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
+                        <td className="px-4 py-2 text-slate-300 font-semibold">{r.label}</td>
+                        <td className="px-4 py-2 text-slate-500 font-mono text-[10px]">{r.hours}</td>
+                        <td className="px-4 py-2 text-right text-emerald-400">{r.wins}</td>
+                        <td className="px-4 py-2 text-right text-rose-400">{r.losses}</td>
+                        <td className="px-4 py-2 text-right font-semibold text-slate-200">{r.wr}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* By Timeframe */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {byTimeframe.map((tf) => (
+              <div key={tf.tf} className="card p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">{tf.tf === 'M5' ? '5 min' : tf.tf === 'M15' ? '15 min' : '1 hour'}</span>
+                  <span className="text-sm font-bold text-slate-200">{tf.wr}</span>
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-emerald-400">{tf.wins}W</span>
+                  <span className="text-rose-400">{tf.losses}L</span>
+                  <span className="text-slate-500">{tf.total} total</span>
+                  <span className={`ml-auto font-semibold ${pnlCls(tf.pnl)}`}>{money(tf.pnl)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Radar Chart */}
+          {selectedBot && settled.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-2 h-2 rounded-full" style={{ background: botColor }} />
+                <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-widest">
+                  Win Rate by Symbol &times; Timeframe
+                </h3>
+              </div>
+              <div style={{ height: 320, position: 'relative' }}>
+                <Radar
+                  data={{
+                    labels: radarLabels,
+                    datasets: [{
+                      label: selectedBot,
+                      data: radarData,
+                      borderColor: botColor,
+                      backgroundColor: botColor + '22',
+                      borderWidth: 1.5,
+                      pointRadius: 3,
+                      pointBackgroundColor: botColor,
+                      pointBorderColor: botColor,
+                    }],
+                  }}
+                  options={singleRadarOptions}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Open Positions & Trade History — only when a bot is selected */}
+          {selectedBot && (
+            <>
+              <PositionsTable trades={filteredTrades} bots={filteredBots} />
+              <TradeHistory trades={filteredTrades} bots={filteredBots} />
+            </>
+          )}
+        </>
+      )}
     </main>
   );
 }

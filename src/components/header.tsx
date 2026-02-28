@@ -1,20 +1,23 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { SchedulerStatus } from '@/lib/api';
+import { useEffect, useState, useMemo, useRef } from 'react';
+import { SchedulerStatus, Bot, Trade } from '@/lib/api';
+import { useAuth } from '@/contexts/auth-context';
 
 interface HeaderProps {
   schedulerStatus: SchedulerStatus | null;
   lastUpdated: string;
   onRefresh: () => Promise<void>;
-  onNewBot: () => void;
-  onRenameBot: () => void;
   onApiExample: () => void;
-  activeTab?: 'dashboard' | 'report';
-  onTabChange?: (tab: 'dashboard' | 'report') => void;
+  onLogin: () => void;
+  activeTab?: 'dashboard' | 'report' | 'bots';
+  onTabChange?: (tab: 'dashboard' | 'report' | 'bots') => void;
+  bots?: Bot[];
+  trades?: Trade[];
 }
 
-export default function Header({ schedulerStatus, lastUpdated, onRefresh, onNewBot, onRenameBot, onApiExample, activeTab = 'dashboard', onTabChange }: HeaderProps) {
+export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiExample, onLogin, activeTab = 'dashboard', onTabChange, bots = [], trades = [] }: HeaderProps) {
+  const { user, logout } = useAuth();
   const [spinning, setSpinning] = useState(false);
   const [schedLabel, setSchedLabel] = useState('\u2026');
   const nextRunRef = useRef<number | null>(null);
@@ -46,6 +49,22 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onNewB
     return () => clearInterval(id);
   }, [schedulerStatus]);
 
+  // Compute user P&L from bot balances vs initial
+  const userPnl = useMemo(() => {
+    if (!bots.length) return { total: 0, pct: 0, totalInitial: 0, totalCurrent: 0 };
+    const totalInitial = bots.reduce((s, b) => s + b.initial_balance, 0);
+    const totalCurrent = bots.reduce((s, b) => s + b.balance, 0);
+    const total = totalCurrent - totalInitial;
+    const pct = totalInitial > 0 ? (total / totalInitial) * 100 : 0;
+    return { total, pct, totalInitial, totalCurrent };
+  }, [bots]);
+
+  const tabs: Array<{ key: 'dashboard' | 'report' | 'bots'; label: string; authOnly?: boolean }> = [
+    { key: 'dashboard', label: 'Dashboard' },
+    { key: 'report', label: 'Report' },
+    { key: 'bots', label: 'Bot Manager', authOnly: true },
+  ];
+
   return (
     <header className="glass sticky top-0 z-40 border-b border-[#1a1a2e]">
       <div className="max-w-[1900px] mx-auto px-5 flex items-center gap-3" style={{ height: 52 }}>
@@ -62,19 +81,21 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onNewB
 
         {onTabChange && (
           <div className="flex items-center gap-1 ml-2">
-            {(['dashboard', 'report'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => onTabChange(tab)}
-                className={`h-7 px-3 rounded-lg text-[11px] font-semibold transition-all ${
-                  activeTab === tab
-                    ? 'bg-[#1a1a2e] text-white border border-[#2a2a4a]'
-                    : 'text-slate-500 hover:text-slate-300 border border-transparent'
-                }`}
-              >
-                {tab === 'dashboard' ? 'Dashboard' : 'Report'}
-              </button>
-            ))}
+            {tabs
+              .filter((t) => !t.authOnly || user)
+              .map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => onTabChange(t.key)}
+                  className={`h-7 px-3 rounded-lg text-[11px] font-semibold transition-all ${
+                    activeTab === t.key
+                      ? 'bg-[#1a1a2e] text-white border border-[#2a2a4a]'
+                      : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
           </div>
         )}
 
@@ -88,6 +109,27 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onNewB
         </div>
 
         <div className="flex-1" />
+
+        {user && (
+          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs" style={{ background: '#0d0d1f', border: '1px solid #1f1f32' }}>
+            <span className="text-slate-400">{user.username}</span>
+            <span className="text-slate-600">|</span>
+            <span className="text-emerald-400 font-medium">${user.available_balance.toLocaleString()}</span>
+            {bots.length > 0 && (
+              <>
+                <span className="text-slate-600">|</span>
+                <span className="text-[10px] text-slate-500">P&L</span>
+                <span className={`font-semibold ${userPnl.total >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {userPnl.total >= 0 ? '+' : ''}{userPnl.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className={`text-[10px] font-medium ${userPnl.pct >= 0 ? 'text-emerald-500/70' : 'text-rose-500/70'}`}>
+                  {userPnl.pct >= 0 ? '+' : ''}{userPnl.pct.toFixed(1)}%
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
         <span className="text-[11px] text-slate-600 hidden lg:block">{lastUpdated}</span>
 
         <button
@@ -111,26 +153,28 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onNewB
           <span className="hidden sm:inline">API</span>
         </button>
 
-        <button
-          onClick={onRenameBot}
-          className="h-8 px-3 rounded-lg border border-[#252540] text-xs font-medium flex items-center gap-1.5 text-amber-400 hover:border-amber-500/50 hover:text-amber-300 transition-all"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-          </svg>
-          <span className="hidden sm:inline">Rename</span>
-        </button>
-
-        <button
-          onClick={onNewBot}
-          className="h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
-          style={{ background: 'linear-gradient(135deg,#7c3aed,#4d79ff)' }}
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18" />
-          </svg>
-          New BOT
-        </button>
+        {user ? (
+          <button
+            onClick={logout}
+            className="h-8 px-3 rounded-lg border border-[#252540] text-xs font-medium flex items-center gap-1.5 text-slate-500 hover:border-rose-500/50 hover:text-rose-400 transition-all"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            <span className="hidden sm:inline">Logout</span>
+          </button>
+        ) : (
+          <button
+            onClick={onLogin}
+            className="h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            style={{ background: 'linear-gradient(135deg,#7c3aed,#4d79ff)' }}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+            </svg>
+            Login
+          </button>
+        )}
       </div>
     </header>
   );

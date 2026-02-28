@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, memo } from 'react';
+import type { TradingViewSettings } from '@/lib/settings-types';
 
 const SYMBOLS = [
   { id: 'BINANCE:BTCUSDT', label: 'BTC', icon: '\u20BF' },
@@ -76,16 +77,28 @@ const ChartWidget = memo(function ChartWidget({ symbol, interval, height }: Char
   return <div ref={containerRef} />;
 });
 
-export default function TradingViewCharts() {
-  const [chartsOpen, setChartsOpen] = useState(true);
-  const [expandedSymbols, setExpandedSymbols] = useState<Set<string>>(new Set(['BINANCE:BTCUSDT']));
-  const [interval, setInterval_] = useState('5');
+interface TradingViewChartsProps {
+  initialSettings?: TradingViewSettings;
+  onSettingsChange?: (s: TradingViewSettings) => void;
+}
+
+export default function TradingViewCharts({ initialSettings, onSettingsChange }: TradingViewChartsProps) {
+  const [chartsOpen, setChartsOpen] = useState(initialSettings?.open ?? true);
+  const [expandedSymbols, setExpandedSymbols] = useState<Set<string>>(
+    new Set(initialSettings?.symbols ?? ['BINANCE:BTCUSDT']),
+  );
+  const [interval, setInterval_] = useState(initialSettings?.interval ?? '5');
+
+  const emitSettings = (patch: Partial<TradingViewSettings>) => {
+    onSettingsChange?.({ symbols: [...expandedSymbols], interval, open: chartsOpen, ...patch });
+  };
 
   const toggleSymbol = (sym: string) => {
     setExpandedSymbols((prev) => {
       const next = new Set(prev);
       if (next.has(sym)) next.delete(sym);
       else next.add(sym);
+      emitSettings({ symbols: [...next] });
       return next;
     });
   };
@@ -93,8 +106,11 @@ export default function TradingViewCharts() {
   const toggleAll = () => {
     if (expandedSymbols.size === SYMBOLS.length) {
       setExpandedSymbols(new Set());
+      emitSettings({ symbols: [] });
     } else {
-      setExpandedSymbols(new Set(SYMBOLS.map((s) => s.id)));
+      const all = SYMBOLS.map((s) => s.id);
+      setExpandedSymbols(new Set(all));
+      emitSettings({ symbols: all });
     }
   };
 
@@ -102,7 +118,7 @@ export default function TradingViewCharts() {
     <div className="card overflow-hidden">
       {/* Header */}
       <div className="px-5 py-3.5 border-b border-[#1a1a2a] flex items-center justify-between gap-3 flex-wrap">
-        <button onClick={() => setChartsOpen(!chartsOpen)} className="flex items-center gap-2 shrink-0 group">
+        <button onClick={() => { setChartsOpen(!chartsOpen); emitSettings({ open: !chartsOpen }); }} className="flex items-center gap-2 shrink-0 group">
           <span style={{ transform: chartsOpen ? '' : 'rotate(-90deg)', transition: 'transform .25s ease', display: 'flex', alignItems: 'center' }}>
             <svg className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -154,7 +170,7 @@ export default function TradingViewCharts() {
             {Object.entries(INTERVALS).map(([val, label]) => (
               <button
                 key={val}
-                onClick={() => setInterval_(val)}
+                onClick={() => { setInterval_(val); emitSettings({ interval: val }); }}
                 className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-colors ${
                   interval === val
                     ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'

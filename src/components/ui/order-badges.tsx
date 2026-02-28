@@ -136,7 +136,18 @@ export function OrderStatusBadge({ trade }: { trade: Trade }) {
     );
   }
 
-  // Cancelled (TTL expired)
+  // Expired (TTL timeout without fill)
+  if (trade.result === 'CANCELLED' && trade.ttl != null) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-500/10 text-orange-400 border border-orange-500/20">
+        <span className="w-1 h-1 rounded-full bg-orange-400" />
+        Expired
+        <span className="text-[9px] text-orange-500/60 ml-0.5">TTL {trade.ttl}s</span>
+      </span>
+    );
+  }
+
+  // Cancelled (other reasons)
   if (trade.result === 'CANCELLED') {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">

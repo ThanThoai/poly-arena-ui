@@ -1,12 +1,49 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8099/poly-arena';
 
+export function getToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('pa_token');
+}
+
+export function setToken(token: string) {
+  localStorage.setItem('pa_token', token);
+}
+
+export function clearToken() {
+  localStorage.removeItem('pa_token');
+}
+
 export async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, opts);
+  const headers: Record<string, string> = {
+    ...(opts?.headers as Record<string, string> || {}),
+  };
+
+  const token = getToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${BASE}${path}`, { ...opts, headers });
+
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('Unauthorized');
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || res.statusText);
   }
   return res.json();
+}
+
+export interface UserProfile {
+  id: number;
+  username: string;
+  email: string;
+  initial_balance: number;
+  allocated_balance: number;
+  available_balance: number;
 }
 
 export interface Trade {
@@ -38,13 +75,20 @@ export interface Trade {
   me_order_id: string | null;
   me_order_status: string | null;
   ttl: number | null;
+  walk_prices: {
+    entry?: { price: number; qty: number; cost: number }[];
+    exit?: { price: number; qty: number; cost: number }[];
+  } | null;
 }
 
 export interface Bot {
   id: number;
   bot_name: string;
+  api_key?: string;
   balance: number;
   initial_balance: number;
+  user_id?: number | null;
+  owner_name?: string | null;
   created_at: string | null;
 }
 

@@ -75,6 +75,7 @@ export default function Dashboard() {
   const bots = data?.bots ?? [];
   const balanceHistory = data?.balanceHistory ?? [];
   const schedulerStatus = data?.schedulerStatus ?? null;
+  const botAchievements = data?.botAchievements ?? {};
 
   return (
     <>
@@ -91,7 +92,7 @@ export default function Dashboard() {
       />
 
       {activeTab === 'report' ? (
-        <ReportPage trades={trades} bots={bots} />
+        <ReportPage trades={trades} bots={bots} botAchievements={botAchievements} />
       ) : activeTab === 'bots' && user ? (
         <BotManagerPage
           onCreateBot={() => setShowCreateBot(true)}
@@ -100,7 +101,7 @@ export default function Dashboard() {
         />
       ) : (
         <main className="max-w-[1900px] mx-auto px-5 py-5 space-y-5">
-          <KpiCards trades={trades} bots={bots} />
+          <KpiCards botAchievements={botAchievements} />
 
           <BalanceChart
             bots={bots}

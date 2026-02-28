@@ -12,7 +12,7 @@ import {
 } from 'chart.js';
 import { Radar } from 'react-chartjs-2';
 import type { ChartOptions } from 'chart.js';
-import { Trade, Bot } from '@/lib/api';
+import { Trade, Bot, BotAchievement } from '@/lib/api';
 import { BOT_PALETTE, money, pnlCls, parseUTC } from '@/lib/helpers';
 import CustomSelect from '@/components/ui/custom-select';
 import PositionsTable from '@/components/positions-table';
@@ -426,12 +426,81 @@ function CompareView({ botsData }: { botsData: BotCompareData[] }) {
 
 /* ── Main Report Page ── */
 
+const TIER_CONFIG: Record<string, { bg: string; border: string; text: string; icon: string; glow: string }> = {
+  BRONZE:   { bg: '#1a1408', border: '#3d2e0a', text: '#cd7f32', icon: '\uD83E\uDD49', glow: 'rgba(205,127,50,.08)' },
+  SILVER:   { bg: '#121418', border: '#2a2e38', text: '#c0c0c0', icon: '\uD83E\uDD48', glow: 'rgba(192,192,192,.08)' },
+  GOLD:     { bg: '#1a1608', border: '#3d360a', text: '#ffd700', icon: '\uD83E\uDD47', glow: 'rgba(255,215,0,.08)' },
+  PLATINUM: { bg: '#0f1218', border: '#1e2a3e', text: '#a8e0ff', icon: '\uD83D\uDC8E', glow: 'rgba(168,224,255,.1)' },
+};
+
+function AchievementShowcase({ achievements }: { achievements: BotAchievement[] }) {
+  if (achievements.length === 0) {
+    return (
+      <div className="card p-5">
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Achievements</h3>
+        <p className="text-sm text-slate-600">No achievements earned yet. Keep trading!</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#1a1a2a] flex items-center gap-2">
+        <span className="text-base">{'\uD83C\uDFC6'}</span>
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+          Achievements
+        </h3>
+        <span className="ml-auto text-[10px] text-slate-600 font-mono">{achievements.length} earned</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
+        {achievements.map((ach) => {
+          const cfg = TIER_CONFIG[ach.tier] || TIER_CONFIG.BRONZE;
+          const earned = ach.earned_at ? new Date(ach.earned_at) : null;
+          return (
+            <div
+              key={ach.id}
+              className="card-sm p-3.5 transition-all hover:scale-[1.02]"
+              style={{ borderColor: cfg.border, boxShadow: `0 0 20px ${cfg.glow}` }}
+            >
+              <div className="flex items-start gap-2.5">
+                <div
+                  className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-lg"
+                  style={{ background: cfg.bg, border: `1px solid ${cfg.border}` }}
+                >
+                  {cfg.icon}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider" style={{ color: cfg.text, background: cfg.bg, border: `1px solid ${cfg.border}` }}>
+                      {ach.tier}
+                    </span>
+                    <span className="text-[9px] text-slate-600 truncate">{ach.slug}</span>
+                  </div>
+                  <p className="text-xs font-bold text-slate-200 truncate" title={ach.name}>{ach.name}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-2">{ach.description}</p>
+                  {earned && (
+                    <p className="text-[9px] text-slate-600 mt-1 font-mono">
+                      {earned.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{' '}
+                      {earned.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface ReportPageProps {
   trades: Trade[];
   bots: Bot[];
+  botAchievements?: Record<number, BotAchievement[]>;
 }
 
-export default function ReportPage({ trades, bots }: ReportPageProps) {
+export default function ReportPage({ trades, bots, botAchievements = {} }: ReportPageProps) {
   const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
   const [selectedBot, setSelectedBot] = useState('');
   const [compareMode, setCompareMode] = useState(false);
@@ -631,6 +700,13 @@ export default function ReportPage({ trades, bots }: ReportPageProps) {
             <KpiCard label="Avg / Trade" value={money(stats.avg)} cls={pnlCls(stats.avg)} />
             <KpiCard label="Win / Loss" value={stats.wlRatio} cls="text-sky-400" />
           </div>
+
+          {/* Achievements */}
+          {selectedBot && (() => {
+            const bot = bots.find((b) => b.bot_name === selectedBot);
+            const achs = bot ? (botAchievements[bot.id] || []) : [];
+            return <AchievementShowcase achievements={achs} />;
+          })()}
 
           {/* Two columns: By Day | By ICT Session */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">

@@ -1,103 +1,96 @@
 'use client';
 
-import { Trade, Bot } from '@/lib/api';
-import { money, computeTopStreaks } from '@/lib/helpers';
+import { BotAchievement } from '@/lib/api';
+
+const TIER_CONFIG: Record<string, { bg: string; border: string; text: string; icon: string }> = {
+  BRONZE:   { bg: '#1a1408', border: '#3d2e0a', text: '#cd7f32', icon: '\uD83E\uDD49' },
+  SILVER:   { bg: '#121418', border: '#2a2e38', text: '#c0c0c0', icon: '\uD83E\uDD48' },
+  GOLD:     { bg: '#1a1608', border: '#3d360a', text: '#ffd700', icon: '\uD83E\uDD47' },
+  PLATINUM: { bg: '#0f1218', border: '#1e2a3e', text: '#a8e0ff', icon: '\uD83D\uDC8E' },
+};
 
 interface KpiCardsProps {
-  trades: Trade[];
-  bots: Bot[];
+  botAchievements: Record<number, BotAchievement[]>;
 }
 
-export default function KpiCards({ trades, bots }: KpiCardsProps) {
-  const settled = trades.filter((t) => t.result !== 'PENDING' && t.profit != null);
-  const botMap: Record<string, { name: string; balance: number; initial: number }> = {};
-  bots.forEach((b) => {
-    botMap[b.bot_name] = { name: b.bot_name, balance: b.initial_balance, initial: b.initial_balance };
+export default function KpiCards({ botAchievements }: KpiCardsProps) {
+  // Collect all achievements, newest first
+  const allAchievements: BotAchievement[] = [];
+  for (const achs of Object.values(botAchievements)) {
+    allAchievements.push(...achs);
+  }
+  allAchievements.sort((a, b) => {
+    const ta = a.earned_at ? new Date(a.earned_at).getTime() : 0;
+    const tb = b.earned_at ? new Date(b.earned_at).getTime() : 0;
+    return tb - ta;
   });
-  settled.forEach((t) => {
-    if (botMap[t.bot_name]) botMap[t.bot_name].balance += t.profit!;
-  });
 
-  const botList = Object.values(botMap);
-  let topWinVal = '\u2014', topWinMeta = 'No data';
-  let topLossVal = '\u2014', topLossMeta = 'No data';
-
-  if (botList.length) {
-    const withPnl = botList.map((b) => ({ ...b, pnl: b.balance - b.initial }));
-    const topWin = withPnl.reduce((a, b) => (b.pnl > a.pnl ? b : a));
-    topWinVal = money(topWin.pnl);
-    topWinMeta = `${topWin.name} \u00B7 $${topWin.balance.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-
-    const topLoss = withPnl.reduce((a, b) => (b.pnl < a.pnl ? b : a));
-    topLossVal = money(topLoss.pnl);
-    topLossMeta = `${topLoss.name} \u00B7 $${topLoss.balance.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  // Take up to 4 latest unique achievements
+  const shown: BotAchievement[] = [];
+  const seen = new Set<string>();
+  for (const ach of allAchievements) {
+    const key = `${ach.bot_id}:${ach.slug}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      shown.push(ach);
+    }
+    if (shown.length >= 4) break;
   }
 
-  const { topWinStreak, topLoseStreak } = computeTopStreaks(trades);
+  if (shown.length === 0) {
+    return (
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="card p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: '#0e0e1a' }}>
+                <span className="text-sm opacity-30">{'\uD83C\uDFC6'}</span>
+              </div>
+              <p className="text-[10px] text-slate-600 uppercase tracking-widest">Achievement</p>
+            </div>
+            <p className="text-sm text-slate-600">No badges yet</p>
+            <p className="text-[10px] text-slate-700 mt-1">Trade to earn achievements</p>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      {/* Top Win */}
-      <div className="card p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: '#052016' }}>
-            <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3h14M5 3a2 2 0 00-2 2v3a7 7 0 0014 0V5a2 2 0 00-2-2M5 3H3m18 0h-2M9 17v2m6-2v2m-6 2h6" />
-            </svg>
+      {shown.map((ach) => {
+        const cfg = TIER_CONFIG[ach.tier] || TIER_CONFIG.BRONZE;
+        return (
+          <div
+            key={ach.id}
+            className="card p-4 transition-all hover:scale-[1.02]"
+            style={{ borderColor: cfg.border }}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <div
+                className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-base"
+                style={{ background: cfg.bg, border: `1px solid ${cfg.border}` }}
+              >
+                {cfg.icon}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] uppercase tracking-widest font-semibold truncate" style={{ color: cfg.text }}>
+                  {ach.tier}
+                </p>
+              </div>
+            </div>
+            <p className="text-sm font-bold text-slate-200 truncate" title={ach.name}>
+              {ach.name}
+            </p>
+            <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-2" title={ach.description}>
+              {ach.description}
+            </p>
+            <p className="text-[10px] mt-1.5 truncate" style={{ color: cfg.text }}>
+              {ach.bot_name}
+            </p>
           </div>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest">Top Win</p>
-        </div>
-        <p className="text-2xl font-bold text-emerald-400">{topWinVal}</p>
-        <p className="text-[11px] text-slate-600 mt-1.5 truncate">{topWinMeta}</p>
-      </div>
-
-      {/* Top Loss */}
-      <div className="card p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: '#200508' }}>
-            <svg className="w-3.5 h-3.5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
-            </svg>
-          </div>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest">Top Loss</p>
-        </div>
-        <p className="text-2xl font-bold text-rose-400">{topLossVal}</p>
-        <p className="text-[11px] text-slate-600 mt-1.5 truncate">{topLossMeta}</p>
-      </div>
-
-      {/* Win Streak */}
-      <div className="card p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: '#052016' }}>
-            <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </div>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest">Win Streak</p>
-        </div>
-        <div className="flex items-end gap-2">
-          <p className="text-2xl font-bold text-emerald-400">{topWinStreak.count || '\u2014'}</p>
-          {topWinStreak.count > 0 && <p className="text-[11px] text-emerald-700 mb-0.5">wins</p>}
-        </div>
-        <p className="text-[11px] text-slate-600 mt-1.5 truncate">{topWinStreak.count ? topWinStreak.bot : 'No data'}</p>
-      </div>
-
-      {/* Lose Streak */}
-      <div className="card p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: '#200508' }}>
-            <svg className="w-3.5 h-3.5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-            </svg>
-          </div>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest">Lose Streak</p>
-        </div>
-        <div className="flex items-end gap-2">
-          <p className="text-2xl font-bold text-rose-400">{topLoseStreak.count || '\u2014'}</p>
-          {topLoseStreak.count > 0 && <p className="text-[11px] text-rose-900 mb-0.5">losses</p>}
-        </div>
-        <p className="text-[11px] text-slate-600 mt-1.5 truncate">{topLoseStreak.count ? topLoseStreak.bot : 'No data'}</p>
-      </div>
+        );
+      })}
     </div>
   );
 }

@@ -121,6 +121,28 @@ export interface PriceEntry {
   stale: boolean;
 }
 
+export interface AchievementDef {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  tier: string;
+  category: string;
+}
+
+export interface BotAchievement {
+  id: number;
+  bot_id: number;
+  bot_name: string;
+  achievement_id: number;
+  slug: string;
+  name: string;
+  description: string;
+  tier: string;
+  earned_at: string | null;
+  metadata_: Record<string, unknown> | null;
+}
+
 export interface OrderbookLevel {
   price: number;
   size: number;

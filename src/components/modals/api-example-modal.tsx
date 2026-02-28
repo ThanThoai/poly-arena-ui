@@ -11,42 +11,51 @@ interface ApiExampleModalProps {
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8099/poly-arena';
 const BO_URL = `${API_BASE}/binary-options`;
 
-/* ─── Section types ─────────────────────────────────────────────────────────── */
+/* ─── Types ────────────────────────────────────────────────────────────────── */
 
 type Lang = 'curl' | 'python' | 'js';
+type MainTab = 'market' | 'limit';
 
-interface Section {
+interface SubSection {
   id: string;
-  title: string;
-  subtitle: string;
-  method: string;
-  endpoint: string;
+  label: string;
   description: string;
-  fields?: { name: string; type: string; required: boolean; note: string }[];
+  fields: { name: string; type: string; required: boolean; note: string }[];
   examples: Record<Lang, string>;
   responseExample?: string;
 }
 
-/* ─── Sections ──────────────────────────────────────────────────────────────── */
+interface TabConfig {
+  title: string;
+  subtitle: string;
+  method: string;
+  endpoint: string;
+  subsections: SubSection[];
+}
 
-const SECTIONS: Section[] = [
-  {
-    id: 'market',
+/* ─── Tab configs ──────────────────────────────────────────────────────────── */
+
+const TABS: Record<MainTab, TabConfig> = {
+  market: {
     title: 'Market Order',
-    subtitle: 'Simplest — fill at current best ask',
+    subtitle: 'Fill immediately at best ask',
     method: 'POST',
     endpoint: '/binary-options/',
-    description:
-      'Place a market order. The server fills immediately at the best available ask price.',
-    fields: [
-      { name: 'symbol',    type: 'string', required: true,  note: 'BTC | ETH | SOL | XRP' },
-      { name: 'timeframe', type: 'string', required: true,  note: 'M5 | M15 | H1' },
-      { name: 'forecast',  type: 'string', required: true,  note: 'GREEN (price up) | RED (price down)' },
-      { name: 'amount',    type: 'number', required: true,  note: 'Bet size in USD (> 0)' },
-      { name: 'reason',    type: 'string', required: false, note: 'Optional note for your records' },
-    ],
-    examples: {
-      curl: `curl -X POST ${BO_URL}/ \\
+    subsections: [
+      {
+        id: 'market-basic',
+        label: 'Basic',
+        description:
+          'Place a market order. The server fills immediately at the best available ask price via Polymarket REST API.',
+        fields: [
+          { name: 'symbol', type: 'string', required: true, note: 'BTC | ETH | SOL | XRP' },
+          { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
+          { name: 'forecast', type: 'string', required: true, note: 'GREEN (price up) | RED (price down)' },
+          { name: 'amount', type: 'number', required: true, note: 'Bet size in USD (> 0)' },
+          { name: 'reason', type: 'string', required: false, note: 'Optional note for your records' },
+        ],
+        examples: {
+          curl: `curl -X POST ${BO_URL}/ \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: YOUR_API_KEY" \\
   -d '{
@@ -55,7 +64,7 @@ const SECTIONS: Section[] = [
     "forecast":  "GREEN",
     "amount":    100
   }'`,
-      python: `import requests
+          python: `import requests
 
 res = requests.post(
     "${BO_URL}/",
@@ -68,8 +77,8 @@ res = requests.post(
     },
 )
 trade = res.json()
-print(f"Trade #{trade['id']} created — status: {trade['result']}")`,
-      js: `const res = await fetch("${BO_URL}/", {
+print(f"Trade #{trade['id']} — avg: {trade['avg_price']}")`,
+          js: `const res = await fetch("${BO_URL}/", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -84,120 +93,58 @@ print(f"Trade #{trade['id']} created — status: {trade['result']}")`,
 });
 
 const trade = await res.json();
-console.log(\`Trade #\${trade.id} created\`);`,
-    },
-    responseExample: `{
+console.log(\`Trade #\${trade.id} — avg: \${trade.avg_price}\`);`,
+        },
+        responseExample: `{
   "id": 42,
-  "bot_name": "my-bot",
   "symbol": "BTC",
   "timeframe": "M5",
   "forecast": "GREEN",
   "amount": 100,
   "result": "PENDING",
-  "profit": null,
   "avg_price": 0.5200,
-  "num_shares": 192.30769231,
-  "settlement_at": "2025-06-01T14:30:00Z",
-  ...
+  "num_shares": 192.3077,
+  "me_order_status": null,
+  "settlement_at": "2025-06-01T14:30:00Z"
 }`,
-  },
-  {
-    id: 'limit',
-    title: 'Limit Order',
-    subtitle: 'Wait for a better price',
-    method: 'POST',
-    endpoint: '/binary-options/',
-    description:
-      'Set limit_price to queue a virtual limit order. It fills only when the ask drops to your price (or better) before the candle expires.',
-    fields: [
-      { name: 'limit_price', type: 'number', required: true, note: '0 < price < 1 — your max buy price' },
-      { name: 'ttl',         type: 'number', required: false, note: 'Auto-cancel after N seconds if unfilled' },
-    ],
-    examples: {
-      curl: `curl -X POST ${BO_URL}/ \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: YOUR_API_KEY" \\
-  -d '{
-    "symbol":      "ETH",
-    "timeframe":   "M15",
-    "forecast":    "RED",
-    "amount":      200,
-    "limit_price": 0.45,
-    "ttl":         120
-  }'`,
-      python: `res = requests.post(
-    "${BO_URL}/",
-    headers={"x-api-key": "YOUR_API_KEY"},
-    json={
-        "symbol":      "ETH",
-        "timeframe":   "M15",
-        "forecast":    "RED",
-        "amount":      200,
-        "limit_price": 0.45,
-        "ttl":         120,   # cancel if not filled in 2 min
-    },
-)
-trade = res.json()
-print(f"Limit order #{trade['id']} — me_status: {trade['me_order_status']}")`,
-      js: `const res = await fetch("${BO_URL}/", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": "YOUR_API_KEY",
-  },
-  body: JSON.stringify({
-    symbol:      "ETH",
-    timeframe:   "M15",
-    forecast:    "RED",
-    amount:      200,
-    limit_price: 0.45,
-    ttl:         120,
-  }),
-});
-
-const trade = await res.json();
-console.log(\`Limit #\${trade.id} — me: \${trade.me_order_status}\`);`,
-    },
-  },
-  {
-    id: 'bracket',
-    title: 'Bracket Order (TP / SL)',
-    subtitle: 'Auto take-profit & stop-loss',
-    method: 'POST',
-    endpoint: '/binary-options/',
-    description:
-      'Add tp_price and/or sl_price to attach shadow bracket orders. The matching engine monitors real-time price and triggers exit automatically.',
-    fields: [
-      { name: 'tp_price', type: 'number', required: false, note: '0 < price < 1 — take profit exit price' },
-      { name: 'sl_price', type: 'number', required: false, note: '0 < price < 1 — stop loss exit price' },
-    ],
-    examples: {
-      curl: `curl -X POST ${BO_URL}/ \\
+      },
+      {
+        id: 'market-tp',
+        label: 'Take Profit',
+        description:
+          'Market order with Take Profit. The matching engine monitors real-time bid price and auto-exits when bid >= tp_price. TP must be higher than current best ask (pre-validated by server).',
+        fields: [
+          { name: 'symbol', type: 'string', required: true, note: 'BTC | ETH | SOL | XRP' },
+          { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
+          { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
+          { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
+          { name: 'tp_price', type: 'number', required: true, note: 'Take profit price (must be > best_ask)' },
+        ],
+        examples: {
+          curl: `curl -X POST ${BO_URL}/ \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: YOUR_API_KEY" \\
   -d '{
     "symbol":    "BTC",
-    "timeframe": "H1",
+    "timeframe": "M5",
     "forecast":  "GREEN",
-    "amount":    500,
-    "tp_price":  0.65,
-    "sl_price":  0.35
+    "amount":    200,
+    "tp_price":  0.70
   }'`,
-      python: `res = requests.post(
+          python: `res = requests.post(
     "${BO_URL}/",
     headers={"x-api-key": "YOUR_API_KEY"},
     json={
         "symbol":    "BTC",
-        "timeframe": "H1",
+        "timeframe": "M5",
         "forecast":  "GREEN",
-        "amount":    500,
-        "tp_price":  0.65,   # exit if price hits 0.65
-        "sl_price":  0.35,   # exit if price drops to 0.35
+        "amount":    200,
+        "tp_price":  0.70,   # auto-exit when bid >= 0.70
     },
 )
 trade = res.json()
-print(f"Bracket order #{trade['id']}")`,
-      js: `const res = await fetch("${BO_URL}/", {
+print(f"Market+TP #{trade['id']} — entry: {trade['avg_price']}")`,
+          js: `const res = await fetch("${BO_URL}/", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -205,133 +152,344 @@ print(f"Bracket order #{trade['id']}")`,
   },
   body: JSON.stringify({
     symbol:    "BTC",
-    timeframe: "H1",
+    timeframe: "M5",
     forecast:  "GREEN",
-    amount:    500,
-    tp_price:  0.65,
-    sl_price:  0.35,
+    amount:    200,
+    tp_price:  0.70,   // auto-exit when bid >= 0.70
   }),
 });
 
 const trade = await res.json();
-console.log(\`Bracket #\${trade.id}\`);`,
-    },
-  },
-  {
-    id: 'status',
-    title: 'Get Trade Status',
-    subtitle: 'Poll by trade ID',
-    method: 'GET',
-    endpoint: '/binary-options/{id}',
-    description:
-      'After creating a trade, use the returned id to check its status. Poll until result changes from PENDING to WIN / LOSS / CANCELLED.',
-    examples: {
-      curl: `# Get status of trade #42
-curl ${BO_URL}/42`,
-      python: `trade_id = 42
-
-res = requests.get(f"${BO_URL}/{trade_id}")
-trade = res.json()
-
-print(f"Status : {trade['result']}")       # PENDING | WIN | LOSS | CANCELLED
-print(f"Profit : {trade['profit']}")       # null while PENDING
-print(f"Settle : {trade['settlement_at']}") # when the candle closes
-
-# For bracket orders, also check:
-print(f"ME status : {trade['me_order_status']}")  # PENDING | FILLED | CANCELED
-print(f"Exit trigger: {trade['exit_trigger']}")    # TP | SL | null`,
-      js: `const tradeId = 42;
-
-const res = await fetch(\`${BO_URL}/\${tradeId}\`);
-const trade = await res.json();
-
-console.log("Status:", trade.result);          // PENDING | WIN | LOSS | CANCELLED
-console.log("Profit:", trade.profit);          // null while PENDING
-console.log("Settle:", trade.settlement_at);
-
-// For bracket orders:
-console.log("ME status:", trade.me_order_status);
-console.log("Exit:", trade.exit_trigger);      // TP | SL | null`,
-    },
-    responseExample: `{
-  "id": 42,
-  "result": "WIN",
-  "profit": 92.30769231,
-  "price_open": 67450.00,
-  "price_close": 67520.00,
-  "avg_price": 0.52,
-  "num_shares": 192.30769231,
-  "settlement_at": "2025-06-01T14:30:00Z",
-  "me_order_status": "FILLED",
-  "exit_trigger": null,
-  ...
+console.log(\`Market+TP #\${trade.id} — entry: \${trade.avg_price}\`);`,
+        },
+        responseExample: `{
+  "id": 43,
+  "amount": 200,
+  "avg_price": 0.5200,
+  "num_shares": 384.6154,
+  "tp_price": 0.70,
+  "me_order_status": "PREFILLED",
+  "result": "PENDING"
 }`,
-  },
-  {
-    id: 'list',
-    title: 'List Trades',
-    subtitle: 'Filter & paginate',
-    method: 'GET',
-    endpoint: '/binary-options/',
-    description:
-      'List all trades with optional filters. Useful to find all pending orders or review history for a specific bot.',
-    fields: [
-      { name: 'bot_name',  type: 'string', required: false, note: 'Filter by bot name (partial match)' },
-      { name: 'symbol',    type: 'string', required: false, note: 'BTC | ETH | SOL | XRP' },
-      { name: 'timeframe', type: 'string', required: false, note: 'M5 | M15 | H1' },
-      { name: 'result',    type: 'string', required: false, note: 'PENDING | WIN | LOSS | CANCELLED' },
-      { name: 'limit',     type: 'number', required: false, note: 'Max results (default 5000)' },
-      { name: 'offset',    type: 'number', required: false, note: 'Skip N results (pagination)' },
-    ],
-    examples: {
-      curl: `# All pending trades for my-bot
-curl "${BO_URL}/?bot_name=my-bot&result=PENDING&limit=50"`,
-      python: `res = requests.get(
+      },
+      {
+        id: 'market-sl',
+        label: 'Stop Loss',
+        description:
+          'Market order with Stop Loss. The matching engine monitors real-time bid price and auto-exits when bid <= sl_price. SL must be lower than current best ask (pre-validated by server).',
+        fields: [
+          { name: 'symbol', type: 'string', required: true, note: 'BTC | ETH | SOL | XRP' },
+          { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
+          { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
+          { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
+          { name: 'sl_price', type: 'number', required: true, note: 'Stop loss price (must be < best_ask)' },
+        ],
+        examples: {
+          curl: `curl -X POST ${BO_URL}/ \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: YOUR_API_KEY" \\
+  -d '{
+    "symbol":    "BTC",
+    "timeframe": "M5",
+    "forecast":  "GREEN",
+    "amount":    200,
+    "sl_price":  0.35
+  }'`,
+          python: `res = requests.post(
     "${BO_URL}/",
-    params={
-        "bot_name": "my-bot",
-        "result":   "PENDING",
-        "limit":    50,
+    headers={"x-api-key": "YOUR_API_KEY"},
+    json={
+        "symbol":    "BTC",
+        "timeframe": "M5",
+        "forecast":  "GREEN",
+        "amount":    200,
+        "sl_price":  0.35,   # auto-exit when bid <= 0.35
     },
 )
-trades = res.json()
-for t in trades:
-    print(f"#{t['id']} {t['symbol']} {t['forecast']} → {t['result']}")`,
-      js: `const params = new URLSearchParams({
-  bot_name: "my-bot",
-  result:   "PENDING",
-  limit:    "50",
+trade = res.json()
+print(f"Market+SL #{trade['id']} — entry: {trade['avg_price']}")`,
+          js: `const res = await fetch("${BO_URL}/", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-key": "YOUR_API_KEY",
+  },
+  body: JSON.stringify({
+    symbol:    "BTC",
+    timeframe: "M5",
+    forecast:  "GREEN",
+    amount:    200,
+    sl_price:  0.35,   // auto-exit when bid <= 0.35
+  }),
 });
 
-const res = await fetch(\`${BO_URL}/?$\{params}\`);
-const trades = await res.json();
-trades.forEach(t =>
-  console.log(\`#\${t.id} \${t.symbol} \${t.forecast} → \${t.result}\`)
-);`,
-    },
+const trade = await res.json();
+console.log(\`Market+SL #\${trade.id} — entry: \${trade.avg_price}\`);`,
+        },
+        responseExample: `{
+  "id": 44,
+  "amount": 200,
+  "avg_price": 0.5200,
+  "num_shares": 384.6154,
+  "sl_price": 0.35,
+  "me_order_status": "PREFILLED",
+  "result": "PENDING"
+}`,
+      },
+    ],
   },
+
+  limit: {
+    title: 'Limit Order',
+    subtitle: 'Fill at your target price or better',
+    method: 'POST',
+    endpoint: '/binary-options/',
+    subsections: [
+      {
+        id: 'limit-basic',
+        label: 'Basic',
+        description:
+          'Set limit_price to place a limit order. If best ask <= limit, fills immediately via REST. Otherwise, queued to the Matching Engine and fills when the ask drops to your price before expiry.',
+        fields: [
+          { name: 'symbol', type: 'string', required: true, note: 'BTC | ETH | SOL | XRP' },
+          { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
+          { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
+          { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
+          { name: 'limit_price', type: 'number', required: true, note: '0 < price < 1 — max buy price' },
+          { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel after N seconds if unfilled' },
+        ],
+        examples: {
+          curl: `curl -X POST ${BO_URL}/ \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: YOUR_API_KEY" \\
+  -d '{
+    "symbol":      "BTC",
+    "timeframe":   "M5",
+    "forecast":    "GREEN",
+    "amount":      200,
+    "limit_price": 0.45,
+    "ttl":         120
+  }'`,
+          python: `res = requests.post(
+    "${BO_URL}/",
+    headers={"x-api-key": "YOUR_API_KEY"},
+    json={
+        "symbol":      "BTC",
+        "timeframe":   "M5",
+        "forecast":    "GREEN",
+        "amount":      200,
+        "limit_price": 0.45,
+        "ttl":         120,   # cancel if not filled in 2 min
+    },
+)
+trade = res.json()
+print(f"Limit #{trade['id']} — status: {trade['me_order_status']}")`,
+          js: `const res = await fetch("${BO_URL}/", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-key": "YOUR_API_KEY",
+  },
+  body: JSON.stringify({
+    symbol:      "BTC",
+    timeframe:   "M5",
+    forecast:    "GREEN",
+    amount:      200,
+    limit_price: 0.45,
+    ttl:         120,
+  }),
+});
+
+const trade = await res.json();
+console.log(\`Limit #\${trade.id} — status: \${trade.me_order_status}\`);`,
+        },
+        responseExample: `// If best_ask > limit → queued to Matching Engine
+{
+  "id": 50,
+  "limit_price": 0.45,
+  "avg_price": null,
+  "num_shares": null,
+  "me_order_status": "PENDING",
+  "result": "PENDING"
+}
+
+// If best_ask <= limit → filled immediately
+{
+  "id": 50,
+  "limit_price": 0.45,
+  "avg_price": 0.4300,
+  "num_shares": 465.1163,
+  "me_order_status": "FILLED",
+  "result": "PENDING"
+}`,
+      },
+      {
+        id: 'limit-tp',
+        label: 'Take Profit',
+        description:
+          'Limit order with Take Profit. If filled immediately, the order is sent to the Matching Engine for TP monitoring. If queued, TP is monitored after the limit fill. Auto-exits when bid >= tp_price.',
+        fields: [
+          { name: 'symbol', type: 'string', required: true, note: 'BTC | ETH | SOL | XRP' },
+          { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
+          { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
+          { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
+          { name: 'limit_price', type: 'number', required: true, note: 'Max buy price' },
+          { name: 'tp_price', type: 'number', required: true, note: 'Take profit (must be > best_ask)' },
+          { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel seconds' },
+        ],
+        examples: {
+          curl: `curl -X POST ${BO_URL}/ \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: YOUR_API_KEY" \\
+  -d '{
+    "symbol":      "BTC",
+    "timeframe":   "M5",
+    "forecast":    "GREEN",
+    "amount":      300,
+    "limit_price": 0.45,
+    "tp_price":    0.70
+  }'`,
+          python: `res = requests.post(
+    "${BO_URL}/",
+    headers={"x-api-key": "YOUR_API_KEY"},
+    json={
+        "symbol":      "BTC",
+        "timeframe":   "M5",
+        "forecast":    "GREEN",
+        "amount":      300,
+        "limit_price": 0.45,
+        "tp_price":    0.70,   # auto-exit when bid >= 0.70
+    },
+)
+trade = res.json()
+print(f"Limit+TP #{trade['id']} — tp: {trade['tp_price']}")`,
+          js: `const res = await fetch("${BO_URL}/", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-key": "YOUR_API_KEY",
+  },
+  body: JSON.stringify({
+    symbol:      "BTC",
+    timeframe:   "M5",
+    forecast:    "GREEN",
+    amount:      300,
+    limit_price: 0.45,
+    tp_price:    0.70,
+  }),
+});
+
+const trade = await res.json();
+console.log(\`Limit+TP #\${trade.id} — tp: \${trade.tp_price}\`);`,
+        },
+        responseExample: `{
+  "id": 51,
+  "limit_price": 0.45,
+  "tp_price": 0.70,
+  "avg_price": 0.4300,
+  "me_order_status": "FILLED",
+  "result": "PENDING"
+}`,
+      },
+      {
+        id: 'limit-sl',
+        label: 'Stop Loss',
+        description:
+          'Limit order with Stop Loss. Works like Limit+TP but monitors the downside. Auto-exits when bid <= sl_price after the limit order fills.',
+        fields: [
+          { name: 'symbol', type: 'string', required: true, note: 'BTC | ETH | SOL | XRP' },
+          { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
+          { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
+          { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
+          { name: 'limit_price', type: 'number', required: true, note: 'Max buy price' },
+          { name: 'sl_price', type: 'number', required: true, note: 'Stop loss (must be < best_ask)' },
+          { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel seconds' },
+        ],
+        examples: {
+          curl: `curl -X POST ${BO_URL}/ \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: YOUR_API_KEY" \\
+  -d '{
+    "symbol":      "BTC",
+    "timeframe":   "M5",
+    "forecast":    "GREEN",
+    "amount":      300,
+    "limit_price": 0.45,
+    "sl_price":    0.30
+  }'`,
+          python: `res = requests.post(
+    "${BO_URL}/",
+    headers={"x-api-key": "YOUR_API_KEY"},
+    json={
+        "symbol":      "BTC",
+        "timeframe":   "M5",
+        "forecast":    "GREEN",
+        "amount":      300,
+        "limit_price": 0.45,
+        "sl_price":    0.30,   # auto-exit when bid <= 0.30
+    },
+)
+trade = res.json()
+print(f"Limit+SL #{trade['id']} — sl: {trade['sl_price']}")`,
+          js: `const res = await fetch("${BO_URL}/", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-key": "YOUR_API_KEY",
+  },
+  body: JSON.stringify({
+    symbol:      "BTC",
+    timeframe:   "M5",
+    forecast:    "GREEN",
+    amount:      300,
+    limit_price: 0.45,
+    sl_price:    0.30,
+  }),
+});
+
+const trade = await res.json();
+console.log(\`Limit+SL #\${trade.id} — sl: \${trade.sl_price}\`);`,
+        },
+        responseExample: `{
+  "id": 52,
+  "limit_price": 0.45,
+  "sl_price": 0.30,
+  "avg_price": 0.4300,
+  "me_order_status": "FILLED",
+  "result": "PENDING"
+}`,
+      },
+    ],
+  },
+};
+
+const MAIN_TABS: { id: MainTab; icon: string }[] = [
+  { id: 'market', icon: '⚡' },
+  { id: 'limit', icon: '🎯' },
 ];
 
-/* ─── Component ─────────────────────────────────────────────────────────────── */
+/* ─── Component ────────────────────────────────────────────────────────────── */
 
 export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps) {
-  const [activeSection, setActiveSection] = useState('market');
-  const [tab, setTab] = useState<Lang>('curl');
+  const [mainTab, setMainTab] = useState<MainTab>('market');
+  const [subIdx, setSubIdx] = useState(0);
+  const [lang, setLang] = useState<Lang>('curl');
 
   if (!open) return null;
 
-  const section = SECTIONS.find((s) => s.id === activeSection)!;
+  const config = TABS[mainTab];
+  const sub = config.subsections[subIdx] ?? config.subsections[0];
 
   const copyCode = () => {
-    navigator.clipboard.writeText(section.examples[tab]).then(
+    navigator.clipboard.writeText(sub.examples[lang]).then(
       () => showToast('Copied!', 'ok'),
       () => showToast('Could not copy', 'error'),
     );
   };
 
-  const methodColor: Record<string, string> = {
-    GET: '#10b981',
-    POST: '#6366f1',
+  const handleMainTab = (id: MainTab) => {
+    setMainTab(id);
+    setSubIdx(0);
   };
 
   return (
@@ -383,48 +541,77 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
           </button>
         </div>
 
-        {/* ── Section tabs ────────────────────────────────────────────────── */}
+        {/* ── Main tabs (Market / Limit) ───────────────────────────────────── */}
         <div
-          className="px-4 py-2 flex gap-1 overflow-x-auto shrink-0"
+          className="px-4 py-2 flex gap-2 shrink-0"
           style={{ background: '#09090f', borderBottom: '1px solid #13132a' }}
         >
-          {SECTIONS.map((s) => (
+          {MAIN_TABS.map((t) => (
             <button
-              key={s.id}
-              onClick={() => { setActiveSection(s.id); }}
-              className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
-                activeSection === s.id
+              key={t.id}
+              onClick={() => handleMainTab(t.id)}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                mainTab === t.id
                   ? 'bg-violet-500/15 text-violet-300 border border-violet-500/30'
-                  : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                  : 'text-slate-500 hover:text-slate-300 border border-transparent hover:border-slate-700'
               }`}
             >
-              <span
-                className="inline-block w-1.5 h-1.5 rounded-full mr-1.5"
-                style={{ background: s.method === 'POST' ? '#6366f1' : '#10b981' }}
-              />
-              {s.title}
+              <span className="text-sm">{t.icon}</span>
+              {TABS[t.id].title}
             </button>
           ))}
         </div>
 
-        {/* ── Body (scrollable) ───────────────────────────────────────────── */}
+        {/* ── Sub-tabs (Basic / TP / SL) ───────────────────────────────────── */}
+        <div
+          className="px-4 py-1.5 flex gap-1 shrink-0"
+          style={{ background: '#0b0b14', borderBottom: '1px solid #13132a' }}
+        >
+          {config.subsections.map((s, i) => (
+            <button
+              key={s.id}
+              onClick={() => setSubIdx(i)}
+              className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${
+                subIdx === i
+                  ? 'bg-white/5 text-slate-200 border border-white/10'
+                  : 'text-slate-500 hover:text-slate-300 border border-transparent'
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+          <div className="flex-1" />
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-600">
+            <span
+              className="px-1.5 py-0.5 rounded font-bold"
+              style={{ background: '#6366f122', color: '#6366f1' }}
+            >
+              POST
+            </span>
+            <code className="font-mono text-slate-400">{config.endpoint}</code>
+          </div>
+        </div>
+
+        {/* ── Body (scrollable) ────────────────────────────────────────────── */}
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
-          {/* Endpoint + description */}
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span
-                className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                style={{ background: methodColor[section.method] + '22', color: methodColor[section.method] }}
-              >
-                {section.method}
-              </span>
-              <code className="text-xs text-slate-300 font-mono">{section.endpoint}</code>
-            </div>
-            <p className="text-[12px] text-slate-400 leading-relaxed">{section.description}</p>
+          {/* Description */}
+          <p className="text-[12px] text-slate-400 leading-relaxed">{sub.description}</p>
+
+          {/* Single Condition hint */}
+          <div
+            className="flex items-start gap-2 px-3 py-2 rounded-lg text-[11px]"
+            style={{ background: '#14142a', border: '1px solid #1f1f3a' }}
+          >
+            <span className="text-amber-400 shrink-0 mt-px">⚠</span>
+            <span className="text-slate-400">
+              <strong className="text-slate-300">Single Condition Policy:</strong> each order supports{' '}
+              <code className="text-violet-300">tp_price</code> OR{' '}
+              <code className="text-violet-300">sl_price</code>, never both.
+            </span>
           </div>
 
           {/* Fields table */}
-          {section.fields && section.fields.length > 0 && (
+          {sub.fields.length > 0 && (
             <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1a1a2a' }}>
               <table className="w-full text-[11px]">
                 <thead>
@@ -435,7 +622,7 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
                   </tr>
                 </thead>
                 <tbody>
-                  {section.fields.map((f) => (
+                  {sub.fields.map((f) => (
                     <tr key={f.name} style={{ borderTop: '1px solid #13132a' }}>
                       <td className="px-3 py-1.5">
                         <code className="text-violet-300">{f.name}</code>
@@ -457,13 +644,13 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
                 className="flex items-center gap-0.5 p-0.5 rounded-lg"
                 style={{ background: '#09090f', border: '1px solid #1a1a2a' }}
               >
-                {(['curl', 'python', 'js'] as const).map((lang) => (
+                {(['curl', 'python', 'js'] as const).map((l) => (
                   <button
-                    key={lang}
-                    onClick={() => setTab(lang)}
-                    className={`ex-tab px-2.5 py-1 text-[11px] font-medium ${tab === lang ? 'active' : ''}`}
+                    key={l}
+                    onClick={() => setLang(l)}
+                    className={`ex-tab px-2.5 py-1 text-[11px] font-medium ${lang === l ? 'active' : ''}`}
                   >
-                    {lang === 'curl' ? 'cURL' : lang === 'python' ? 'Python' : 'JS'}
+                    {l === 'curl' ? 'cURL' : l === 'python' ? 'Python' : 'JS'}
                   </button>
                 ))}
               </div>
@@ -487,13 +674,13 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
               style={{ background: '#05050e', border: '1px solid #13132a' }}
             >
               <pre className="p-4 text-[12px] leading-[1.75] font-mono whitespace-pre">
-                <code>{section.examples[tab]}</code>
+                <code>{sub.examples[lang]}</code>
               </pre>
             </div>
           </div>
 
           {/* Response example */}
-          {section.responseExample && (
+          {sub.responseExample && (
             <div>
               <p className="text-[11px] text-slate-500 font-medium mb-2">Response example</p>
               <div
@@ -501,7 +688,7 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
                 style={{ background: '#05050e', border: '1px solid #10b98133' }}
               >
                 <pre className="p-4 text-[12px] leading-[1.75] font-mono whitespace-pre text-emerald-300/80">
-                  <code>{section.responseExample}</code>
+                  <code>{sub.responseExample}</code>
                 </pre>
               </div>
             </div>
@@ -516,7 +703,8 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
           </svg>
-          All POST endpoints require <code className="text-slate-400 mx-1">x-api-key</code> header. GET endpoints are public.
+          All endpoints require <code className="text-slate-400 mx-1">x-api-key</code> header.
+          Only <code className="text-slate-400 mx-1">tp_price</code> OR <code className="text-slate-400 mx-1">sl_price</code> — not both.
         </div>
       </div>
     </div>

@@ -79,6 +79,14 @@ export interface Trade {
     entry?: { price: number; qty: number; cost: number }[];
     exit?: { price: number; qty: number; cost: number }[];
   } | null;
+  traces: {
+    timestamp: string;
+    stage: string;
+    action: string;
+    details: string;
+    data?: Record<string, unknown>;
+  }[] | null;
+  position_closed: boolean | null;
 }
 
 export interface Bot {

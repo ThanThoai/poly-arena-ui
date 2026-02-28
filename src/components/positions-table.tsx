@@ -6,6 +6,8 @@ import { BOT_PALETTE, parseUTC, dtMs, dtShort, dtParts, fmtDiff, fmtCents } from
 import SymbolBadge from '@/components/ui/symbol-badge';
 import { OrderTypeBadge, BracketBadges, OrderStatusBadge } from '@/components/ui/order-badges';
 import CustomSelect from '@/components/ui/custom-select';
+import OrderTraceModal from '@/components/modals/order-trace-modal';
+import TraceTimeline from '@/components/ui/trace-timeline';
 import type { PositionsSettings } from '@/lib/settings-types';
 
 interface PositionsTableProps {
@@ -24,6 +26,7 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [, setTick] = useState(0);
+  const [traceTrade, setTraceTrade] = useState<Trade | null>(null);
 
   const emitPositionSettings = (patch: Partial<PositionsSettings>) => {
     onSettingsChange?.({ botFilter, symbolFilter, tfFilter: timeframeFilter, typeFilter, forecastFilter, ...patch });
@@ -46,7 +49,7 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
 
   const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
 
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 10;
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
   const start = (safePage - 1) * PAGE_SIZE;
@@ -162,12 +165,11 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
               <th className="px-4 py-2.5 text-left font-medium">TTL</th>
               <th className="px-4 py-2.5 text-left font-medium">Timing</th>
               <th className="px-4 py-2.5 text-left font-medium">Settles In</th>
-              <th className="px-4 py-2.5 font-medium" />
             </tr>
           </thead>
           <tbody>
             {paged.length === 0 ? (
-              <tr><td colSpan={14} className="px-5 py-8 text-center text-slate-600">No open positions</td></tr>
+              <tr><td colSpan={13} className="px-5 py-8 text-center text-slate-600">No open positions</td></tr>
             ) : (
               paged.map((t) => {
                 const open = expandedRows.has(t.id);
@@ -202,6 +204,7 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
                     now={now}
                     latencyMs={latencyMs}
                     onToggle={() => toggleDetail(t.id)}
+                    onTrace={() => setTraceTrade(t)}
                   />
                 );
               })
@@ -211,14 +214,14 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
       </div>
 
       {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="px-5 py-2.5 border-t border-[#1a1a2a] flex items-center justify-between gap-3 flex-wrap">
-          <span className="text-[11px] text-slate-600">
-            {sorted.length ? `${start + 1}\u2013${Math.min(start + PAGE_SIZE, sorted.length)} of ${sorted.length}` : '0'}
-          </span>
-          <Pagination currentPage={safePage} totalPages={totalPages} onPageChange={setCurrentPage} />
-        </div>
-      )}
+      <div className="px-5 py-2.5 border-t border-[#1a1a2a] flex items-center justify-between gap-3 flex-wrap">
+        <span className="text-[11px] text-slate-600">
+          {sorted.length ? `${start + 1}\u2013${Math.min(start + PAGE_SIZE, sorted.length)} of ${sorted.length} position${sorted.length !== 1 ? 's' : ''}` : '0 positions'}
+        </span>
+        {totalPages > 1 && <Pagination currentPage={safePage} totalPages={totalPages} onPageChange={setCurrentPage} />}
+      </div>
+
+      <OrderTraceModal open={traceTrade !== null} onClose={() => setTraceTrade(null)} trade={traceTrade} />
     </div>
   );
 }
@@ -233,6 +236,7 @@ function PositionRow({
   now,
   latencyMs,
   onToggle,
+  onTrace,
 }: {
   trade: Trade;
   open: boolean;
@@ -243,6 +247,7 @@ function PositionRow({
   now: number;
   latencyMs: number | null;
   onToggle: () => void;
+  onTrace: () => void;
 }) {
   const settled = dtParts(t.settlement_at);
 
@@ -277,8 +282,22 @@ function PositionRow({
 
   return (
     <>
-      <tr className={`border-b border-[#0e0e1a] transition-colors ${open ? 'bg-[#0e0e1c]' : 'hover:bg-[#0e0e1a]/60'}`}>
-        <td className="px-4 py-2.5 text-slate-500">#{t.id}</td>
+      <tr
+        onClick={onToggle}
+        className={`border-b border-[#0e0e1a] transition-colors cursor-pointer select-none ${open ? 'bg-[#0e0e1c]' : 'hover:bg-[#0e0e1a]/60'}`}
+      >
+        <td className="px-4 py-2.5 text-slate-500">
+          <span className="flex items-center gap-1">
+            <svg
+              className="w-3 h-3 text-slate-600 transition-transform duration-150 shrink-0"
+              style={{ transform: open ? 'rotate(90deg)' : undefined }}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            #{t.id}
+          </span>
+        </td>
         <td className="px-4 py-2.5">
           <span className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: botColor }} />
@@ -356,25 +375,10 @@ function PositionRow({
           <span className="font-mono text-[11px] font-semibold text-amber-400">{countdown}</span>
           <p className="text-[10px] text-slate-500 mt-0.5 whitespace-nowrap">{dtShort(t.settlement_at)}</p>
         </td>
-        <td className="px-4 py-2.5">
-          <button
-            onClick={onToggle}
-            className={`flex items-center gap-0.5 text-[11px] font-medium transition-colors whitespace-nowrap ${open ? 'text-violet-400' : 'text-slate-500 hover:text-slate-300'}`}
-          >
-            <svg
-              className="w-3 h-3 transition-transform duration-150"
-              style={{ transform: open ? 'rotate(90deg)' : undefined }}
-              fill="none" viewBox="0 0 24 24" stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-            Detail
-          </button>
-        </td>
       </tr>
       {open && (
         <tr className="border-b border-[#0e0e1a]">
-          <td colSpan={14} style={{ background: '#09090f', borderLeft: '2px solid rgba(139,92,246,.3)' }}>
+          <td colSpan={13} style={{ background: '#09090f', borderLeft: '2px solid rgba(139,92,246,.3)' }}>
             <div className="px-5 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-8 gap-y-3">
               {/* Order Type */}
               <div>
@@ -496,6 +500,27 @@ function PositionRow({
                 <div className="col-span-2 sm:col-span-3 lg:col-span-6">
                   <p className="text-[9px] text-slate-600 uppercase tracking-widest mb-0.5">Reason</p>
                   <p className="text-xs text-amber-300/80 leading-relaxed">{t.reason}</p>
+                </div>
+              )}
+              {/* Order Trace section */}
+              <div className="col-span-2 sm:col-span-3 lg:col-span-6 pt-1 flex items-center gap-3">
+                <button
+                  onClick={(e) => { e.stopPropagation(); onTrace(); }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-violet-400 hover:text-violet-300 border border-violet-500/20 hover:border-violet-500/40 hover:bg-violet-500/5 transition-all"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Order Trace
+                </button>
+                {t.traces && t.traces.length > 0 && (
+                  <span className="text-[10px] text-slate-600">{t.traces.length} trace{t.traces.length !== 1 ? 's' : ''}</span>
+                )}
+              </div>
+              {/* Inline traces */}
+              {t.traces && t.traces.length > 0 && (
+                <div className="col-span-2 sm:col-span-3 lg:col-span-6">
+                  <TraceTimeline traces={t.traces} />
                 </div>
               )}
             </div>

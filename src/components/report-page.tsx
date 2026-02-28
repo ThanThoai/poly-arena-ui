@@ -747,13 +747,9 @@ export default function ReportPage({ trades, bots }: ReportPageProps) {
             </div>
           )}
 
-          {/* Open Positions & Trade History — only when a bot is selected */}
-          {selectedBot && (
-            <>
-              <PositionsTable trades={filteredTrades} bots={filteredBots} />
-              <TradeHistory trades={filteredTrades} bots={filteredBots} />
-            </>
-          )}
+          {/* Open Positions & Trade History */}
+          <PositionsTable trades={filteredTrades} bots={filteredBots} />
+          <TradeHistory trades={filteredTrades} bots={filteredBots} />
         </>
       )}
     </main>

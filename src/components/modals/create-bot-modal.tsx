@@ -13,7 +13,7 @@ interface CreateBotModalProps {
 export default function CreateBotModal({ open, onClose, onCreated }: CreateBotModalProps) {
   const { user, refreshUser } = useAuth();
   const [botName, setBotName] = useState('');
-  const [initialBalance, setInitialBalance] = useState('10000');
+  const [initialBalance, setInitialBalance] = useState('1000');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -23,7 +23,7 @@ export default function CreateBotModal({ open, onClose, onCreated }: CreateBotMo
 
   const handleClose = () => {
     setBotName('');
-    setInitialBalance(String(Math.min(10000, available)));
+    setInitialBalance(String(Math.min(1000, available)));
     setError('');
     onClose();
   };
@@ -39,7 +39,7 @@ export default function CreateBotModal({ open, onClose, onCreated }: CreateBotMo
         body: JSON.stringify({ bot_name: botName.trim(), initial_balance: Number(initialBalance) }),
       });
       setBotName('');
-      setInitialBalance('10000');
+      setInitialBalance('1000');
       await refreshUser();
       onCreated(data);
     } catch (ex) {

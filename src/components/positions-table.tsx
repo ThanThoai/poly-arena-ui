@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { Trade, Bot } from '@/lib/api';
-import { BOT_PALETTE, parseUTC, dtMs, dtShort, dtParts, fmtDiff, fmtCents } from '@/lib/helpers';
+import { BOT_PALETTE, parseUTC, dtMs, dtShort, dtParts, fmtDiff, fmtCents, TF_PERIOD_MS } from '@/lib/helpers';
 import SymbolBadge from '@/components/ui/symbol-badge';
 import { OrderTypeBadge, BracketBadges, OrderStatusBadge } from '@/components/ui/order-badges';
 import CustomSelect from '@/components/ui/custom-select';
@@ -13,11 +13,12 @@ import type { PositionsSettings } from '@/lib/settings-types';
 interface PositionsTableProps {
   trades: Trade[];
   bots: Bot[];
+  sessionOffset?: number;
   initialSettings?: PositionsSettings;
   onSettingsChange?: (s: PositionsSettings) => void;
 }
 
-export default function PositionsTable({ trades, bots, initialSettings, onSettingsChange }: PositionsTableProps) {
+export default function PositionsTable({ trades, bots, sessionOffset, initialSettings, onSettingsChange }: PositionsTableProps) {
   const [botFilter, setBotFilter] = useState(initialSettings?.botFilter ?? '');
   const [symbolFilter, setSymbolFilter] = useState(initialSettings?.symbolFilter ?? '');
   const [timeframeFilter, setTimeframeFilter] = useState(initialSettings?.tfFilter ?? '');
@@ -25,7 +26,7 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
   const [forecastFilter, setForecastFilter] = useState(initialSettings?.forecastFilter ?? '');
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
   const [traceTrade, setTraceTrade] = useState<Trade | null>(null);
 
   const emitPositionSettings = (patch: Partial<PositionsSettings>) => {
@@ -33,6 +34,7 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
   };
 
   const pending = useMemo(() => trades.filter((t) => t.result === 'PENDING'), [trades]);
+
   const filtered = useMemo(() => pending.filter((t) => {
     if (botFilter && t.bot_name !== botFilter) return false;
     if (symbolFilter && t.symbol !== symbolFilter) return false;
@@ -40,8 +42,20 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
     if (typeFilter === 'MARKET' && t.limit_price != null) return false;
     if (typeFilter === 'LIMIT' && t.limit_price == null) return false;
     if (forecastFilter && t.forecast !== forecastFilter) return false;
+    // Dynamic session offset: compare settlement candle vs current candle
+    // so A+1 orders auto-move to current tab when their candle starts.
+    const activeOffset = sessionOffset ?? 0;
+    const periodMs = TF_PERIOD_MS[t.timeframe] ?? 300_000;
+    const settleMs = t.settlement_at ? parseUTC(t.settlement_at)?.getTime() ?? 0 : 0;
+    const candleOpenMs = settleMs > 0 ? settleMs - periodMs : 0;
+    const nowMs = Date.now();
+    const currentCandleOpen = nowMs - (nowMs % periodMs);
+    const dynamicOffset = candleOpenMs > 0
+      ? Math.max(0, Math.round((candleOpenMs - currentCandleOpen) / periodMs))
+      : (t.session_offset ?? 0);
+    if (dynamicOffset !== activeOffset) return false;
     return true;
-  }), [pending, botFilter, symbolFilter, timeframeFilter, typeFilter, forecastFilter]);
+  }), [pending, botFilter, symbolFilter, timeframeFilter, typeFilter, forecastFilter, sessionOffset, tick]);
   const sorted = useMemo(
     () => [...filtered].sort((a, b) => (parseUTC(a.settlement_at)?.getTime() ?? 0) - (parseUTC(b.settlement_at)?.getTime() ?? 0)),
     [filtered],
@@ -83,6 +97,11 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
           {pending.length > 0 && (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
               {filtered.length}{filtered.length !== pending.length && `/${pending.length}`}
+            </span>
+          )}
+          {sessionOffset === 1 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/20">
+              A+1
             </span>
           )}
         </div>
@@ -181,7 +200,15 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
                 const botColor = BOT_PALETTE[botIdx >= 0 ? botIdx % BOT_PALETTE.length : 0];
                 const settleMs = t.settlement_at ? parseUTC(t.settlement_at)?.getTime() ?? 0 : 0;
                 const diff = settleMs - now;
-                const countdown = diff > 0 ? fmtDiff(diff) : '\u2014';
+                const settling = diff <= 0 && settleMs > 0;
+                const countdown = diff > 0 ? fmtDiff(diff) : settling ? 'settling' : '\u2014';
+
+                // A+1: candle open = settlement_at - period
+                const isA1 = (t.session_offset ?? 0) > 0;
+                const periodMs = TF_PERIOD_MS[t.timeframe] ?? 300_000;
+                const candleOpenMs = settleMs > 0 ? settleMs - periodMs : 0;
+                const candleStartDiff = candleOpenMs - now;
+                const candleActive = candleStartDiff <= 0;
 
                 const createdMs = t.created_at ? parseUTC(t.created_at)?.getTime() ?? 0 : 0;
                 const total = settleMs - createdMs;
@@ -203,6 +230,10 @@ export default function PositionsTable({ trades, bots, initialSettings, onSettin
                     pct={pct}
                     now={now}
                     latencyMs={latencyMs}
+                    isA1={isA1}
+                    settling={settling}
+                    candleStartDiff={candleStartDiff}
+                    candleActive={candleActive}
                     onToggle={() => toggleDetail(t.id)}
                     onTrace={() => setTraceTrade(t)}
                   />
@@ -235,6 +266,10 @@ function PositionRow({
   pct,
   now,
   latencyMs,
+  isA1,
+  settling,
+  candleStartDiff,
+  candleActive,
   onToggle,
   onTrace,
 }: {
@@ -246,6 +281,10 @@ function PositionRow({
   pct: number;
   now: number;
   latencyMs: number | null;
+  isA1: boolean;
+  settling: boolean;
+  candleStartDiff: number;
+  candleActive: boolean;
   onToggle: () => void;
   onTrace: () => void;
 }) {
@@ -296,6 +335,11 @@ function PositionRow({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
             #{t.id}
+            {t.session_offset != null && t.session_offset > 0 && (
+              <span className="ml-1 px-1 py-px rounded text-[8px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/25">
+                A+1
+              </span>
+            )}
           </span>
         </td>
         <td className="px-4 py-2.5">
@@ -372,7 +416,22 @@ function PositionRow({
           </div>
         </td>
         <td className="px-4 py-2.5">
-          <span className="font-mono text-[11px] font-semibold text-amber-400">{countdown}</span>
+          {isA1 && !candleActive && candleStartDiff > 0 ? (
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] text-indigo-400">starts</span>
+                <span className="font-mono text-[11px] font-semibold text-indigo-400">{fmtDiff(candleStartDiff)}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] text-amber-500/60">settles</span>
+                <span className="font-mono text-[11px] font-semibold text-amber-500/60">{countdown}</span>
+              </div>
+            </div>
+          ) : settling ? (
+            <span className="font-mono text-[11px] font-semibold text-sky-400 animate-pulse">settling...</span>
+          ) : (
+            <span className="font-mono text-[11px] font-semibold text-amber-400">{countdown}</span>
+          )}
           <p className="text-[10px] text-slate-500 mt-0.5 whitespace-nowrap">{dtShort(t.settlement_at)}</p>
         </td>
       </tr>
@@ -383,7 +442,14 @@ function PositionRow({
               {/* Order Type */}
               <div>
                 <p className="text-[9px] text-slate-600 uppercase tracking-widest mb-0.5">Order Type</p>
-                <OrderTypeBadge trade={t} />
+                <div className="flex items-center gap-1.5">
+                  <OrderTypeBadge trade={t} />
+                  {t.session_offset != null && t.session_offset > 0 && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-indigo-500/15 text-indigo-400 border border-indigo-500/25">
+                      Next Session (A+1)
+                    </span>
+                  )}
+                </div>
                 {t.limit_price != null && (
                   <p className="text-[9px] text-slate-600 mt-0.5">limit @ {fmtCents(t.limit_price)}</p>
                 )}
@@ -473,12 +539,40 @@ function PositionRow({
                 {settled ? (
                   <p className="text-xs text-slate-500">{settled.date} {settled.time}</p>
                 ) : <p className="text-xs text-slate-600">{'\u2014'}</p>}
-                <div className="flex items-center gap-2 mt-1">
-                  <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: '#1a1a2a' }}>
-                    <div className="h-full rounded-full transition-all duration-1000" style={{ background: '#f59e0b', width: `${pct.toFixed(1)}%` }} />
+                {isA1 && !candleActive && candleStartDiff > 0 ? (
+                  <>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className="text-[9px] text-indigo-400 w-10">starts</span>
+                      <span className="font-mono text-xs font-semibold text-indigo-400">{fmtDiff(candleStartDiff)}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="text-[9px] text-amber-500/60 w-10">settles</span>
+                      <span className="font-mono text-xs font-semibold text-amber-500/60">{countdown}</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: '#1a1a2a' }}>
+                        <div className="h-full rounded-full transition-all duration-1000" style={{ background: '#818cf8', width: `${pct.toFixed(1)}%` }} />
+                      </div>
+                    </div>
+                  </>
+                ) : settling ? (
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: '#1a1a2a' }}>
+                      <div className="h-full rounded-full" style={{ background: '#38bdf8', width: '100%' }} />
+                    </div>
+                    <span className="font-mono text-xs font-semibold text-sky-400 animate-pulse shrink-0">settling...</span>
                   </div>
-                  <span className="font-mono text-xs font-semibold text-amber-400 shrink-0 w-14 text-right">{countdown}</span>
-                </div>
+                ) : (
+                  <div className="flex items-center gap-2 mt-1">
+                    {isA1 && candleActive && (
+                      <span className="text-[9px] text-emerald-500 shrink-0">candle active</span>
+                    )}
+                    <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: '#1a1a2a' }}>
+                      <div className="h-full rounded-full transition-all duration-1000" style={{ background: '#f59e0b', width: `${pct.toFixed(1)}%` }} />
+                    </div>
+                    <span className="font-mono text-xs font-semibold text-amber-400 shrink-0 w-14 text-right">{countdown}</span>
+                  </div>
+                )}
               </div>
               {t.ttl != null && (
                 <div>

@@ -49,15 +49,16 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
     return () => clearInterval(id);
   }, [schedulerStatus]);
 
-  // Compute user P&L from bot balances vs initial
+  // Compute user P&L from only the logged-in user's bots
   const userPnl = useMemo(() => {
-    if (!bots.length) return { total: 0, pct: 0, totalInitial: 0, totalCurrent: 0 };
-    const totalInitial = bots.reduce((s, b) => s + b.initial_balance, 0);
-    const totalCurrent = bots.reduce((s, b) => s + b.balance, 0);
+    const myBots = user ? bots.filter((b) => b.user_id === user.id) : [];
+    if (!myBots.length) return { total: 0, pct: 0, totalInitial: 0, totalCurrent: 0 };
+    const totalInitial = myBots.reduce((s, b) => s + b.initial_balance, 0);
+    const totalCurrent = myBots.reduce((s, b) => s + b.balance, 0);
     const total = totalCurrent - totalInitial;
     const pct = totalInitial > 0 ? (total / totalInitial) * 100 : 0;
     return { total, pct, totalInitial, totalCurrent };
-  }, [bots]);
+  }, [bots, user]);
 
   const tabs: Array<{ key: 'dashboard' | 'report' | 'bots'; label: string; authOnly?: boolean }> = [
     { key: 'dashboard', label: 'Dashboard' },

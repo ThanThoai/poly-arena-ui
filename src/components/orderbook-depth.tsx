@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { useOrderbook } from '@/hooks/use-trades';
+import { useState, useMemo, useEffect } from 'react';
+import { useOrderbookWs } from '@/hooks/use-trades';
 import { OrderbookLevel } from '@/lib/api';
 import SymbolBadge from '@/components/ui/symbol-badge';
 import type { OrderbookSettings } from '@/lib/settings-types';
@@ -9,25 +9,90 @@ import type { OrderbookSettings } from '@/lib/settings-types';
 const SYMBOLS = ['BTC', 'ETH', 'SOL', 'XRP'];
 const TIMEFRAMES = ['M5', 'M15', 'H1'];
 
+const TF_SECONDS: Record<string, number> = { M5: 300, M15: 900, H1: 3600 };
+
+/** Format a Unix timestamp as HH:MM in the client's local timezone. */
+function formatSessionTime(ts: number): string {
+  const d = new Date(ts * 1000);
+  const hh = d.getHours().toString().padStart(2, '0');
+  const mm = d.getMinutes().toString().padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+/** Compute current candle-open timestamp for a given timeframe. */
+function currentCandleOpen(tf: string): number {
+  const period = TF_SECONDS[tf] ?? 300;
+  const now = Math.floor(Date.now() / 1000);
+  return now - (now % period);
+}
+
 interface OrderbookDepthProps {
   initialSettings?: OrderbookSettings;
   onSettingsChange?: (s: OrderbookSettings) => void;
+  onSessionChange?: (offset: number) => void;
 }
 
-export default function OrderbookDepth({ initialSettings, onSettingsChange }: OrderbookDepthProps) {
+export default function OrderbookDepth({ initialSettings, onSettingsChange, onSessionChange }: OrderbookDepthProps) {
   const [selectedSymbol, setSelectedSymbol] = useState(initialSettings?.symbol ?? 'BTC');
   const [selectedTf, setSelectedTf] = useState(initialSettings?.timeframe ?? 'M5');
   const [open, setOpen] = useState(initialSettings?.open ?? true);
+  const [selectedSession, setSelectedSession] = useState<number | undefined>(undefined);
 
-  const orderbooks = useOrderbook(selectedSymbol, selectedTf);
+  // Tick that bumps at every candle boundary so session labels auto-update
+  const [candleEpoch, setCandleEpoch] = useState(() => currentCandleOpen(selectedTf));
+  useEffect(() => {
+    const period = TF_SECONDS[selectedTf] ?? 300;
+    const schedule = () => {
+      const now = Math.floor(Date.now() / 1000);
+      const nextBoundary = (Math.floor(now / period) + 1) * period;
+      return (nextBoundary - now) * 1000 + 500; // +500ms buffer
+    };
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      setCandleEpoch(currentCandleOpen(selectedTf));
+      timer = setTimeout(tick, schedule());
+    };
+    timer = setTimeout(tick, schedule());
+    return () => clearTimeout(timer);
+  }, [selectedTf]);
+
+  const { orderbooks, connected } = useOrderbookWs(selectedSymbol, selectedTf);
+
+  // Always compute 4 session tabs: 1 past, current, 2 future
+  // undefined = current session (legacy key), numbers = session-keyed timestamps
+  const sessionTabs = useMemo(() => {
+    const period = TF_SECONDS[selectedTf] ?? 300;
+    const cur = candleEpoch;
+    return [
+      cur - period,       // previous
+      undefined,          // current (maps to legacy orderbook keys)
+      cur + period,       // next +1
+      cur + period * 2,   // next +2
+    ] as (number | undefined)[];
+  }, [selectedTf, candleEpoch]);
+
+  // Reset selected session to current when it falls out of the tab range
+  useEffect(() => {
+    if (selectedSession !== undefined && !sessionTabs.includes(selectedSession)) {
+      setSelectedSession(undefined);
+      onSessionChange?.(0);
+    }
+  }, [sessionTabs, selectedSession, onSessionChange]);
+
+  // Emit session offset: future sessions → 1, current/past → 0
+  const handleSessionSelect = (s: number | undefined) => {
+    setSelectedSession(s);
+    const isFuture = s !== undefined && s > candleEpoch;
+    onSessionChange?.(isFuture ? 1 : 0);
+  };
 
   const bookUp = useMemo(
-    () => orderbooks.find((ob) => ob.direction === 'UP'),
-    [orderbooks],
+    () => orderbooks.find((ob) => ob.symbol === selectedSymbol && ob.timeframe === selectedTf && ob.direction === 'UP' && ob.session === selectedSession),
+    [orderbooks, selectedSymbol, selectedTf, selectedSession],
   );
   const bookDown = useMemo(
-    () => orderbooks.find((ob) => ob.direction === 'DOWN'),
-    [orderbooks],
+    () => orderbooks.find((ob) => ob.symbol === selectedSymbol && ob.timeframe === selectedTf && ob.direction === 'DOWN' && ob.session === selectedSession),
+    [orderbooks, selectedSymbol, selectedTf, selectedSession],
   );
 
   const totalLevels = useMemo(() => {
@@ -52,13 +117,29 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange }: Or
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </span>
-          <span className="w-2 h-2 rounded-full bg-violet-400 live-dot" />
+          {/* Connection status dot */}
+          <span
+            className={`w-2 h-2 rounded-full transition-colors ${
+              connected ? 'bg-violet-400 live-dot' : 'bg-slate-600'
+            }`}
+            title={connected ? 'WebSocket connected' : 'WebSocket disconnected — reconnecting...'}
+          />
           <h3 className="text-xs font-semibold text-slate-400 group-hover:text-slate-200 uppercase tracking-widest transition-colors">
             Orderbook Depth
           </h3>
           {totalLevels > 0 && (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/20">
               {totalLevels} levels
+            </span>
+          )}
+          {connected && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              WS
+            </span>
+          )}
+          {!connected && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              reconnecting
             </span>
           )}
         </button>
@@ -86,7 +167,7 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange }: Or
             {TIMEFRAMES.map((tf) => (
               <button
                 key={tf}
-                onClick={() => { setSelectedTf(tf); emitSettings({ timeframe: tf }); }}
+                onClick={() => { setSelectedTf(tf); setSelectedSession(undefined); emitSettings({ timeframe: tf }); }}
                 className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${
                   selectedTf === tf
                     ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
@@ -100,12 +181,45 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange }: Or
         </div>
       </div>
 
+      {/* Session tabs — always visible: 1 past + current + 2 future */}
+      {open && (
+        <div className="px-5 py-2 border-b border-[#1a1a2a] flex items-center gap-1 overflow-x-auto">
+          <span className="text-[9px] text-slate-600 uppercase tracking-wide mr-1 shrink-0">Session</span>
+          {sessionTabs.map((s) => {
+            const isCurrent = s === undefined;
+            const ts = s ?? candleEpoch;
+            const label = formatSessionTime(ts);
+            const isActive = s === selectedSession;
+            return (
+              <button
+                key={s ?? 'current'}
+                onClick={() => handleSessionSelect(s)}
+                className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors whitespace-nowrap flex items-center gap-1 ${
+                  isCurrent
+                    ? isActive
+                      ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                      : 'text-red-400/70 hover:text-red-300 border border-red-500/20'
+                    : isActive
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                }`}
+              >
+                {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-red-500 live-dot shrink-0" />}
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Body */}
       <div className={`collapsible ${open ? '' : 'collapsed'}`}>
         <div className="collapsible-inner">
           {!hasData ? (
             <div className="px-5 py-8 text-center text-slate-600 text-xs">
-              No orderbook data for {selectedSymbol} {selectedTf}
+              {connected
+                ? `No orderbook data for ${selectedSymbol} ${selectedTf}`
+                : 'Connecting to orderbook feed...'}
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-[#1a1a2a]">

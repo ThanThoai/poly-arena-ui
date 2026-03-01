@@ -1,4 +1,4 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8099/poly-arena';
+const BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -87,6 +87,7 @@ export interface Trade {
     data?: Record<string, unknown>;
   }[] | null;
   position_closed: boolean | null;
+  session_offset: number | null;
 }
 
 export interface Bot {
@@ -152,6 +153,7 @@ export interface OrderbookEntry {
   symbol: string;
   timeframe: string;
   direction: string;
+  session?: number;
   bids: OrderbookLevel[];
   asks: OrderbookLevel[];
   updated_at: string | null;

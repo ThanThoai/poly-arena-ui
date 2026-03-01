@@ -52,6 +52,7 @@ const TABS: Record<MainTab, TabConfig> = {
           { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
           { name: 'forecast', type: 'string', required: true, note: 'GREEN (price up) | RED (price down)' },
           { name: 'amount', type: 'number', required: true, note: 'Bet size in USD (> 0)' },
+          { name: 'session_offset', type: 'number', required: false, note: '0 = current candle (default), 1 = next candle (A+1)' },
           { name: 'reason', type: 'string', required: false, note: 'Optional note for your records' },
         ],
         examples: {
@@ -59,10 +60,11 @@ const TABS: Record<MainTab, TabConfig> = {
   -H "Content-Type: application/json" \\
   -H "x-api-key: YOUR_API_KEY" \\
   -d '{
-    "symbol":    "BTC",
-    "timeframe": "M5",
-    "forecast":  "GREEN",
-    "amount":    100
+    "symbol":         "BTC",
+    "timeframe":      "M5",
+    "forecast":       "GREEN",
+    "amount":         100,
+    "session_offset": 1
   }'`,
           python: `import requests
 
@@ -70,10 +72,11 @@ res = requests.post(
     "${BO_URL}/",
     headers={"x-api-key": "YOUR_API_KEY"},
     json={
-        "symbol":    "BTC",
-        "timeframe": "M5",
-        "forecast":  "GREEN",
-        "amount":    100,
+        "symbol":         "BTC",
+        "timeframe":      "M5",
+        "forecast":       "GREEN",
+        "amount":         100,
+        "session_offset": 1,   # trade on the next candle (A+1)
     },
 )
 trade = res.json()
@@ -85,17 +88,19 @@ print(f"Trade #{trade['id']} — avg: {trade['avg_price']}")`,
     "x-api-key": "YOUR_API_KEY",
   },
   body: JSON.stringify({
-    symbol:    "BTC",
-    timeframe: "M5",
-    forecast:  "GREEN",
-    amount:    100,
+    symbol:         "BTC",
+    timeframe:      "M5",
+    forecast:       "GREEN",
+    amount:         100,
+    session_offset: 1,   // trade on the next candle (A+1)
   }),
 });
 
 const trade = await res.json();
 console.log(\`Trade #\${trade.id} — avg: \${trade.avg_price}\`);`,
         },
-        responseExample: `{
+        responseExample: `// session_offset=0 (default) — settles at current candle close
+{
   "id": 42,
   "symbol": "BTC",
   "timeframe": "M5",
@@ -104,7 +109,14 @@ console.log(\`Trade #\${trade.id} — avg: \${trade.avg_price}\`);`,
   "result": "PENDING",
   "avg_price": 0.5200,
   "num_shares": 192.3077,
-  "me_order_status": null,
+  "session_offset": 0,
+  "settlement_at": "2025-06-01T14:25:00Z"
+}
+
+// session_offset=1 — settles at next candle close
+{
+  "id": 43,
+  "session_offset": 1,
   "settlement_at": "2025-06-01T14:30:00Z"
 }`,
       },
@@ -119,6 +131,7 @@ console.log(\`Trade #\${trade.id} — avg: \${trade.avg_price}\`);`,
           { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
           { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
           { name: 'tp_price', type: 'number', required: true, note: 'Take profit price (must be > best_ask)' },
+          { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
         ],
         examples: {
           curl: `curl -X POST ${BO_URL}/ \\
@@ -183,6 +196,7 @@ console.log(\`Market+TP #\${trade.id} — entry: \${trade.avg_price}\`);`,
           { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
           { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
           { name: 'sl_price', type: 'number', required: true, note: 'Stop loss price (must be < best_ask)' },
+          { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
         ],
         examples: {
           curl: `curl -X POST ${BO_URL}/ \\
@@ -257,6 +271,7 @@ console.log(\`Market+SL #\${trade.id} — entry: \${trade.avg_price}\`);`,
           { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
           { name: 'limit_price', type: 'number', required: true, note: '0 < price < 1 — max buy price' },
           { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel after N seconds if unfilled' },
+          { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
         ],
         examples: {
           curl: `curl -X POST ${BO_URL}/ \\
@@ -336,6 +351,7 @@ console.log(\`Limit #\${trade.id} — status: \${trade.me_order_status}\`);`,
           { name: 'limit_price', type: 'number', required: true, note: 'Max buy price' },
           { name: 'tp_price', type: 'number', required: true, note: 'Take profit (must be > best_ask)' },
           { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel seconds' },
+          { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
         ],
         examples: {
           curl: `curl -X POST ${BO_URL}/ \\
@@ -404,6 +420,7 @@ console.log(\`Limit+TP #\${trade.id} — tp: \${trade.tp_price}\`);`,
           { name: 'limit_price', type: 'number', required: true, note: 'Max buy price' },
           { name: 'sl_price', type: 'number', required: true, note: 'Stop loss (must be < best_ask)' },
           { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel seconds' },
+          { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
         ],
         examples: {
           curl: `curl -X POST ${BO_URL}/ \\
@@ -597,17 +614,30 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
           {/* Description */}
           <p className="text-[12px] text-slate-400 leading-relaxed">{sub.description}</p>
 
-          {/* Single Condition hint */}
-          <div
-            className="flex items-start gap-2 px-3 py-2 rounded-lg text-[11px]"
-            style={{ background: '#14142a', border: '1px solid #1f1f3a' }}
-          >
-            <span className="text-amber-400 shrink-0 mt-px">⚠</span>
-            <span className="text-slate-400">
-              <strong className="text-slate-300">Single Condition Policy:</strong> each order supports{' '}
-              <code className="text-violet-300">tp_price</code> OR{' '}
-              <code className="text-violet-300">sl_price</code>, never both.
-            </span>
+          {/* Hints */}
+          <div className="space-y-2">
+            <div
+              className="flex items-start gap-2 px-3 py-2 rounded-lg text-[11px]"
+              style={{ background: '#14142a', border: '1px solid #1f1f3a' }}
+            >
+              <span className="text-amber-400 shrink-0 mt-px">⚠</span>
+              <span className="text-slate-400">
+                <strong className="text-slate-300">Single Condition Policy:</strong> each order supports{' '}
+                <code className="text-violet-300">tp_price</code> OR{' '}
+                <code className="text-violet-300">sl_price</code>, never both.
+              </span>
+            </div>
+            <div
+              className="flex items-start gap-2 px-3 py-2 rounded-lg text-[11px]"
+              style={{ background: '#0a1420', border: '1px solid #1a2a3a' }}
+            >
+              <span className="text-sky-400 shrink-0 mt-px">ℹ</span>
+              <span className="text-slate-400">
+                <strong className="text-slate-300">Session Offset:</strong>{' '}
+                <code className="text-sky-300">session_offset=0</code> (default) settles at the current candle close.{' '}
+                <code className="text-sky-300">session_offset=1</code> trades on the <em>next</em> candle (A+1) — settles one candle later.
+              </span>
+            </div>
           </div>
 
           {/* Fields table */}

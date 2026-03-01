@@ -225,7 +225,7 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
     onSettingsChange?.({ timeframe: tf, selectedBots: [...pnlBotFilter] });
   };
 
-  const initBalance = ownerFilteredBots[0]?.initial_balance ?? 10000;
+  const initBalance = ownerFilteredBots[0]?.initial_balance ?? 1000;
   const intervalMs = BALANCE_TF_MS[balanceTf] ?? BALANCE_TF_MS.H1;
   const tEnd = Date.now();
   const windowStart = tEnd - (TF_WINDOW[balanceTf] ?? TF_WINDOW.H1);

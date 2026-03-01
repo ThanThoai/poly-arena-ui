@@ -36,6 +36,7 @@ export default function Dashboard() {
   const [selectedBots, setSelectedBots] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'report' | 'bots'>('dashboard');
   const [botRefreshKey, setBotRefreshKey] = useState(0);
+  const [sessionOffset, setSessionOffset] = useState(0);
 
   const [lastUpdated, setLastUpdated] = useState('');
 
@@ -101,7 +102,7 @@ export default function Dashboard() {
         />
       ) : (
         <main className="max-w-[1900px] mx-auto px-5 py-5 space-y-5">
-          <KpiCards botAchievements={botAchievements} />
+          <KpiCards trades={trades} bots={bots} />
 
           <BalanceChart
             bots={bots}
@@ -129,12 +130,14 @@ export default function Dashboard() {
             <OrderbookDepth
               initialSettings={settings.orderbook}
               onSettingsChange={(s) => updateSettings({ orderbook: s })}
+              onSessionChange={setSessionOffset}
             />
           </div>
 
           <PositionsTable
             trades={trades}
             bots={bots}
+            sessionOffset={sessionOffset}
             initialSettings={settings.positions}
             onSettingsChange={(s) => updateSettings({ positions: s })}
           />

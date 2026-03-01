@@ -4,11 +4,14 @@ export const BOT_PALETTE = [
   '#4ade80', '#f472b6', '#facc15', '#67e8f9',
 ];
 
-export const BALANCE_TF_MS: Record<string, number> = {
+export const TF_PERIOD_MS: Record<string, number> = {
   M5: 5 * 60 * 1000,
   M15: 15 * 60 * 1000,
   H1: 60 * 60 * 1000,
 };
+
+/** @deprecated use TF_PERIOD_MS */
+export const BALANCE_TF_MS: Record<string, number> = TF_PERIOD_MS;
 
 export const TF_WINDOW: Record<string, number> = {
   M5: 6 * 60 * 60 * 1000,

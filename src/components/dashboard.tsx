@@ -75,6 +75,7 @@ export default function Dashboard() {
   const trades = data?.trades ?? [];
   const bots = data?.bots ?? [];
   const balanceHistory = data?.balanceHistory ?? [];
+  const userBalanceHistory = data?.userBalanceHistory ?? [];
   const schedulerStatus = data?.schedulerStatus ?? null;
   const botAchievements = data?.botAchievements ?? {};
 
@@ -107,6 +108,7 @@ export default function Dashboard() {
           <BalanceChart
             bots={bots}
             balanceHistory={balanceHistory}
+            userBalanceHistory={userBalanceHistory}
             trades={trades}
             onBotFilterChange={handleBotFilterChange}
             initialSettings={settings.balanceChart}

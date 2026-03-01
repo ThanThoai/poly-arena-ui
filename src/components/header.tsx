@@ -115,16 +115,19 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
           <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs" style={{ background: '#0d0d1f', border: '1px solid #1f1f32' }}>
             <span className="text-slate-400">{user.username}</span>
             <span className="text-slate-600">|</span>
-            <span className="text-emerald-400 font-medium">${user.available_balance.toLocaleString()}</span>
-            {bots.length > 0 && (
+            <span className="text-[10px] text-slate-500">Balance</span>
+            <span className="text-emerald-400 font-medium">
+              ${userPnl.totalCurrent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            {userPnl.totalInitial > 0 && (
               <>
                 <span className="text-slate-600">|</span>
                 <span className="text-[10px] text-slate-500">P&L</span>
                 <span className={`font-semibold ${userPnl.total >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {userPnl.total >= 0 ? '+' : ''}{userPnl.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {userPnl.total >= 0 ? '+$' : '-$'}{Math.abs(userPnl.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
                 <span className={`text-[10px] font-medium ${userPnl.pct >= 0 ? 'text-emerald-500/70' : 'text-rose-500/70'}`}>
-                  {userPnl.pct >= 0 ? '+' : ''}{userPnl.pct.toFixed(1)}%
+                  ({userPnl.pct >= 0 ? '+' : ''}{userPnl.pct.toFixed(1)}%)
                 </span>
               </>
             )}

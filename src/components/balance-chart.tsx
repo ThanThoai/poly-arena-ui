@@ -14,7 +14,7 @@ import {
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import type { ChartOptions, Plugin } from 'chart.js';
-import { Bot, BalanceHistory, Trade } from '@/lib/api';
+import { Bot, BalanceHistory, UserBalanceHistory, Trade } from '@/lib/api';
 import { BOT_PALETTE, BALANCE_TF_MS, TF_WINDOW, compact, parseUTC, pnlCls } from '@/lib/helpers';
 import type { BalanceChartSettings } from '@/lib/settings-types';
 
@@ -23,6 +23,7 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, T
 interface BalanceChartProps {
   bots: Bot[];
   balanceHistory: BalanceHistory[];
+  userBalanceHistory: UserBalanceHistory[];
   trades: Trade[];
   onBotFilterChange?: (selected: Set<string>) => void;
   initialSettings?: BalanceChartSettings;
@@ -33,10 +34,12 @@ interface BalanceChartProps {
 interface UserAgg {
   name: string;
   botNames: string[];
-  totalBalance: number;
-  totalInit: number;
-  pnl: number;
-  pnlPct: number;
+  totalBalance: number;    // sum(bot.balance) + available
+  totalInit: number;       // user.initial_balance or sum(bot.initial_balance)
+  realizedPnl: number;     // sum(profit) for settled orders
+  pendingAmount: number;   // sum(amount) for PENDING orders (locked capital)
+  pnl: number;             // realized only
+  pnlPct: number;          // realized only
 }
 
 const endLabelPlugin: Plugin<'line'> = {
@@ -56,7 +59,11 @@ const endLabelPlugin: Plugin<'line'> = {
       const raw = ds.data[ds.data.length - 1] as { y: number };
       const val = raw?.y ?? 0;
       const init = (ds as any).initBalance || 0;
-      const pctVal = init > 0 ? ((val - init) / init) * 100 : 0;
+      const realPnl = (ds as any).realizedPnl;
+      // Use realized P&L if available, otherwise fall back to val-init
+      const pctVal = realPnl !== undefined && init > 0
+        ? (realPnl / init) * 100
+        : init > 0 ? ((val - init) / init) * 100 : 0;
       const pctSign = pctVal >= 0 ? '+' : '';
       labels.push({
         x: last.x + 8,
@@ -164,33 +171,71 @@ const crosshairPlugin: Plugin<'line'> = {
   },
 };
 
-export default function BalanceChart({ bots, balanceHistory, trades, onBotFilterChange, initialSettings, onSettingsChange }: BalanceChartProps) {
+export default function BalanceChart({ bots, balanceHistory, userBalanceHistory, trades, onBotFilterChange, initialSettings, onSettingsChange }: BalanceChartProps) {
   const [balanceTf, setBalanceTf] = useState(initialSettings?.timeframe ?? 'M5');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [userFilter, setUserFilter] = useState<Set<string>>(new Set());
 
+  // Pre-compute per-bot P&L breakdown from trades
+  const botPnlMap = useMemo(() => {
+    const m = new Map<string, { realizedPnl: number; pendingAmount: number }>();
+    for (const t of trades) {
+      let entry = m.get(t.bot_name);
+      if (!entry) { entry = { realizedPnl: 0, pendingAmount: 0 }; m.set(t.bot_name, entry); }
+      if (t.result === 'WIN' || t.result === 'LOSS') {
+        entry.realizedPnl += t.profit ?? 0;
+      } else if (t.result === 'PENDING' || t.result === null) {
+        entry.pendingAmount += t.amount;
+      }
+      // CANCELLED with profit=0 doesn't affect realized PnL
+    }
+    return m;
+  }, [trades]);
+
   // Aggregate users from bots
   const users = useMemo<UserAgg[]>(() => {
-    const map = new Map<string, { botNames: string[]; totalBalance: number; totalInit: number }>();
+    const map = new Map<string, {
+      botNames: string[];
+      totalBotBalance: number;
+      totalBotInit: number;
+      userInitBalance: number;
+      realizedPnl: number;
+      pendingAmount: number;
+    }>();
     for (const b of bots) {
       const owner = b.owner_name || b.bot_name;
       let u = map.get(owner);
       if (!u) {
-        u = { botNames: [], totalBalance: 0, totalInit: 0 };
+        u = { botNames: [], totalBotBalance: 0, totalBotInit: 0, userInitBalance: 0, realizedPnl: 0, pendingAmount: 0 };
         map.set(owner, u);
       }
       u.botNames.push(b.bot_name);
-      u.totalBalance += b.balance;
-      u.totalInit += b.initial_balance;
+      u.totalBotBalance += b.balance;
+      u.totalBotInit += b.initial_balance;
+      if (b.user_initial_balance != null && b.user_initial_balance > 0) {
+        u.userInitBalance = b.user_initial_balance;
+      }
+      const bp = botPnlMap.get(b.bot_name);
+      if (bp) {
+        u.realizedPnl += bp.realizedPnl;
+        u.pendingAmount += bp.pendingAmount;
+      }
     }
     const result: UserAgg[] = [];
     for (const [name, u] of map) {
-      const pnl = u.totalBalance - u.totalInit;
-      const pnlPct = u.totalInit > 0 ? (pnl / u.totalInit) * 100 : 0;
-      result.push({ name, ...u, pnl, pnlPct });
+      const hasUserPool = u.userInitBalance > 0;
+      const available = hasUserPool ? Math.max(0, u.userInitBalance - u.totalBotInit) : 0;
+      const totalBalance = u.totalBotBalance + available;
+      const totalInit = hasUserPool ? u.userInitBalance : u.totalBotInit;
+      const realizedPnl = u.realizedPnl;
+      const pendingAmount = u.pendingAmount;
+      // PnL % based on realized only
+      const pnl = realizedPnl;
+      const pnlPct = totalInit > 0 ? (pnl / totalInit) * 100 : 0;
+      result.push({ name, botNames: u.botNames, totalBalance, totalInit, realizedPnl, pendingAmount, pnl, pnlPct });
     }
     return result.sort((a, b) => a.name.localeCompare(b.name));
-  }, [bots]);
+  }, [bots, botPnlMap]);
 
   const userNames = useMemo(() => users.map((u) => u.name), [users]);
   const visibleUsers = userFilter.size > 0 ? userNames.filter((u) => userFilter.has(u)) : userNames;
@@ -203,19 +248,26 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
     return u.botNames.map((bn) => {
       const b = bots.find((x) => x.bot_name === bn);
       if (!b) return null;
-      const hist = balanceHistory
-        .filter((h) => h.bot_name === bn && h.recorded_at)
-        .sort((a, bb) => (parseUTC(a.recorded_at)?.getTime() ?? 0) - (parseUTC(bb.recorded_at)?.getTime() ?? 0));
-      const currentBal = hist.length ? hist[hist.length - 1].balance : b.initial_balance;
-      const pnl = currentBal - b.initial_balance;
-      const pnlPct = b.initial_balance > 0 ? (pnl / b.initial_balance) * 100 : 0;
+      const bp = botPnlMap.get(bn);
+      const realizedPnl = bp?.realizedPnl ?? 0;
+      const pendingAmt = bp?.pendingAmount ?? 0;
+      const realizedPnlPct = b.initial_balance > 0 ? (realizedPnl / b.initial_balance) * 100 : 0;
       // Count trades
       const botTrades = trades.filter((t) => t.bot_name === bn && (t.result === 'WIN' || t.result === 'LOSS'));
+      const pendingTrades = trades.filter((t) => t.bot_name === bn && (t.result === 'PENDING' || t.result === null));
       const wins = botTrades.filter((t) => t.result === 'WIN').length;
       const losses = botTrades.filter((t) => t.result === 'LOSS').length;
-      return { name: bn, balance: currentBal, init: b.initial_balance, pnl, pnlPct, wins, losses, total: botTrades.length };
-    }).filter(Boolean) as { name: string; balance: number; init: number; pnl: number; pnlPct: number; wins: number; losses: number; total: number }[];
-  }, [selectedUser, users, bots, balanceHistory, trades]);
+      return {
+        name: bn, balance: b.balance, init: b.initial_balance,
+        realizedPnl, realizedPnlPct, pendingAmt,
+        wins, losses, total: botTrades.length, pendingCount: pendingTrades.length,
+      };
+    }).filter(Boolean) as {
+      name: string; balance: number; init: number;
+      realizedPnl: number; realizedPnlPct: number; pendingAmt: number;
+      wins: number; losses: number; total: number; pendingCount: number;
+    }[];
+  }, [selectedUser, users, bots, botPnlMap, trades]);
 
   const handleUserClick = (name: string) => {
     setSelectedUser(selectedUser === name ? null : name);
@@ -252,7 +304,38 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
   const tEnd = Date.now();
   const windowStart = tEnd - (TF_WINDOW[balanceTf] ?? TF_WINDOW.H1);
 
-  // Build user-level aggregated datasets
+  // Build realized P&L timeline per user from settled trades
+  // Only trades with result WIN/LOSS/CANCELLED count — PENDING (open positions) are excluded
+  const userRealizedTimeline = useMemo(() => {
+    // Map bot_name → owner_name
+    const botOwner = new Map<string, string>();
+    for (const b of bots) {
+      botOwner.set(b.bot_name, b.owner_name || b.bot_name);
+    }
+
+    // Collect settled trades with timestamps, grouped by owner
+    const ownerEvents = new Map<string, { ts: number; profit: number }[]>();
+    for (const t of trades) {
+      if (t.result !== 'WIN' && t.result !== 'LOSS' && t.result !== 'CANCELLED') continue;
+      const profit = t.profit ?? 0;
+      // Use settlement_at or updated_at as the realized timestamp
+      const tsStr = t.settlement_at || t.updated_at;
+      if (!tsStr) continue;
+      const ts = parseUTC(tsStr)?.getTime();
+      if (!ts) continue;
+
+      const owner = botOwner.get(t.bot_name) || t.bot_name;
+      let arr = ownerEvents.get(owner);
+      if (!arr) { arr = []; ownerEvents.set(owner, arr); }
+      arr.push({ ts, profit });
+    }
+
+    // Sort each by timestamp
+    for (const arr of ownerEvents.values()) arr.sort((a, b) => a.ts - b.ts);
+    return ownerEvents;
+  }, [trades, bots]);
+
+  // Build user-level datasets based on realized P&L only
   const datasets = useMemo(() => {
     const ds = visibleUsers
       .map((userName, idx) => {
@@ -260,29 +343,17 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
         const user = users.find((u) => u.name === userName);
         if (!user) return null;
 
-        // Aggregate balance history across all bots of this user
-        const allHist: { ts: number; bot: string; balance: number }[] = [];
-        for (const bn of user.botNames) {
-          const hist = balanceHistory
-            .filter((h) => h.bot_name === bn && h.recorded_at)
-            .map((h) => ({ ts: parseUTC(h.recorded_at)!.getTime(), bot: bn, balance: h.balance }));
-          allHist.push(...hist);
-        }
-        allHist.sort((a, b) => a.ts - b.ts);
+        const initBalance = user.totalInit;
+        const events = userRealizedTimeline.get(userName) || [];
 
-        if (!allHist.length) return null;
-
-        // Track per-bot current balance for aggregation
-        const botBalance = new Map<string, number>();
-        for (const bn of user.botNames) {
-          const b = bots.find((x) => x.bot_name === bn);
-          botBalance.set(bn, b ? b.initial_balance : 0);
-        }
-
-        // Set base balances from history before window
+        // Compute cumulative realized balance over time
+        // Each event adds profit to running balance
         let histIdx = 0;
-        while (histIdx < allHist.length && allHist[histIdx].ts < windowStart) {
-          botBalance.set(allHist[histIdx].bot, allHist[histIdx].balance);
+        let cumulativeProfit = 0;
+
+        // Advance past events before window, accumulating their profit
+        while (histIdx < events.length && events[histIdx].ts < windowStart) {
+          cumulativeProfit += events[histIdx].profit;
           histIdx++;
         }
 
@@ -290,24 +361,29 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
         const data: { x: number; y: number }[] = [];
 
         for (let t = tStart; t <= tEnd; t += intervalMs) {
-          while (histIdx < allHist.length && allHist[histIdx].ts <= t) {
-            botBalance.set(allHist[histIdx].bot, allHist[histIdx].balance);
+          while (histIdx < events.length && events[histIdx].ts <= t) {
+            cumulativeProfit += events[histIdx].profit;
             histIdx++;
           }
-          let sum = 0;
-          for (const v of botBalance.values()) sum += v;
-          data.push({ x: t, y: +sum.toFixed(2) });
+          const balance = initBalance + cumulativeProfit;
+          data.push({ x: t, y: +balance.toFixed(2) });
         }
 
-        // Consume remaining history
-        while (histIdx < allHist.length) {
-          botBalance.set(allHist[histIdx].bot, allHist[histIdx].balance);
+        // Consume remaining events
+        while (histIdx < events.length) {
+          cumulativeProfit += events[histIdx].profit;
           histIdx++;
         }
         if (data.length && data[data.length - 1].x < tEnd) {
-          let sum = 0;
-          for (const v of botBalance.values()) sum += v;
-          data.push({ x: tEnd, y: +sum.toFixed(2) });
+          const balance = initBalance + cumulativeProfit;
+          data.push({ x: tEnd, y: +balance.toFixed(2) });
+        }
+
+        // If no data points at all, show flat line at initial balance
+        if (!data.length) {
+          const tStart2 = Math.floor(windowStart / intervalMs) * intervalMs;
+          data.push({ x: tStart2, y: initBalance });
+          data.push({ x: tEnd, y: initBalance });
         }
 
         const lastIdx = data.length - 1;
@@ -320,6 +396,7 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
           tension: 0.3,
           fill: false,
           initBalance: user.totalInit,
+          realizedPnl: user.realizedPnl,
           pointRadius: data.map((_: any, i: number) => (i === 0 || i === lastIdx) ? 7 : 0),
           pointHoverRadius: 9,
           pointBackgroundColor: color,
@@ -354,7 +431,7 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
     }
 
     return ds;
-  }, [visibleUsers, users, bots, balanceHistory, intervalMs, windowStart, tEnd]);
+  }, [visibleUsers, users, userRealizedTimeline, intervalMs, windowStart, tEnd]);
 
   const options: ChartOptions<'line'> = {
     responsive: true,
@@ -383,12 +460,12 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
             const ds = datasets[c.datasetIndex] as any;
             const val = c.parsed.y ?? 0;
             const init = ds?.initBalance;
+            const realPnl = ds?.realizedPnl;
             const formatted = '$' + Number(val).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            if (init && init > 0) {
-              const pnl = val - init;
-              const pctVal = ((pnl) / init) * 100;
-              const sign = pnl >= 0 ? '+' : '';
-              return ` ${c.dataset.label}: ${formatted} (P&L: ${sign}$${Math.abs(pnl).toFixed(2)} / ${sign}${pctVal.toFixed(1)}%)`;
+            if (init && init > 0 && realPnl !== undefined) {
+              const pctVal = (realPnl / init) * 100;
+              const sign = realPnl >= 0 ? '+' : '';
+              return ` ${c.dataset.label}: ${formatted} (Realized: ${sign}$${Math.abs(realPnl).toFixed(2)} / ${sign}${pctVal.toFixed(1)}%)`;
             }
             return ` ${c.dataset.label}: ${formatted}`;
           },
@@ -428,12 +505,13 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
 
     const totalBalance = visible.reduce((s, v) => s + v.totalBalance, 0);
     const totalInit = visible.reduce((s, v) => s + v.totalInit, 0);
-    const totalPnl = totalBalance - totalInit;
-    const totalPnlPct = totalInit > 0 ? (totalPnl / totalInit) * 100 : 0;
+    const totalRealized = visible.reduce((s, v) => s + v.realizedPnl, 0);
+    const totalPending = visible.reduce((s, v) => s + v.pendingAmount, 0);
+    const totalRealizedPct = totalInit > 0 ? (totalRealized / totalInit) * 100 : 0;
     const best = visible.reduce((a, b) => (b.pnlPct > a.pnlPct ? b : a), visible[0]);
     const worst = visible.reduce((a, b) => (b.pnlPct < a.pnlPct ? b : a), visible[0]);
 
-    return { totalBalance, totalPnl, totalPnlPct, best, worst, count: visible.length };
+    return { totalBalance, totalInit, totalRealized, totalRealizedPct, totalPending, best, worst, count: visible.length };
   }, [users, visibleUsers]);
 
   const allSel = userFilter.size === 0;
@@ -499,9 +577,12 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
                 {u.name}
                 <span className="text-[10px] ml-1 opacity-80">
                   {' '}· ${compact(u.totalBalance)}{' '}
-                  <span style={{ color: u.pnlPct >= 0 ? '#34d399' : '#fb7185' }}>
-                    ({u.pnlPct >= 0 ? '+' : ''}{u.pnlPct.toFixed(1)}%)
+                  <span style={{ color: u.realizedPnl >= 0 ? '#34d399' : '#fb7185' }}>
+                    ({u.realizedPnl >= 0 ? '+' : ''}{u.pnlPct.toFixed(1)}%)
                   </span>
+                  {u.pendingAmount > 0 && (
+                    <span className="text-amber-500/70"> [{compact(u.pendingAmount)}]</span>
+                  )}
                 </span>
               </button>
             );
@@ -517,12 +598,18 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
             <span className="ml-2 font-semibold text-slate-200">${compact(summaryStats.totalBalance)}</span>
           </div>
           <div className="card-sm px-3 py-1.5 text-[11px]">
-            <span className="text-slate-500">Total P&L</span>
-            <span className={`ml-2 font-semibold ${pnlCls(summaryStats.totalPnl)}`}>
-              {summaryStats.totalPnl >= 0 ? '+' : ''}${compact(Math.abs(summaryStats.totalPnl))}
-              {' '}({summaryStats.totalPnlPct >= 0 ? '+' : ''}{summaryStats.totalPnlPct.toFixed(1)}%)
+            <span className="text-slate-500">Realized P&L</span>
+            <span className={`ml-2 font-semibold ${pnlCls(summaryStats.totalRealized)}`}>
+              {summaryStats.totalRealized >= 0 ? '+' : ''}${compact(Math.abs(summaryStats.totalRealized))}
+              {' '}({summaryStats.totalRealizedPct >= 0 ? '+' : ''}{summaryStats.totalRealizedPct.toFixed(1)}%)
             </span>
           </div>
+          {summaryStats.totalPending > 0 && (
+            <div className="card-sm px-3 py-1.5 text-[11px]">
+              <span className="text-slate-500">Pending</span>
+              <span className="ml-2 font-semibold text-amber-400">${compact(summaryStats.totalPending)}</span>
+            </div>
+          )}
           {summaryStats.count > 1 && (
             <>
               <div className="card-sm px-3 py-1.5 text-[11px]">
@@ -562,8 +649,8 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
             {selectedUserBots.map((bot) => {
-              const pctColor = bot.pnlPct >= 0 ? 'text-emerald-400' : 'text-rose-400';
-              const pnlSign = bot.pnl >= 0 ? '+' : '';
+              const pctColor = bot.realizedPnlPct >= 0 ? 'text-emerald-400' : 'text-rose-400';
+              const pnlSign = bot.realizedPnl >= 0 ? '+' : '';
               const winRate = bot.total > 0 ? ((bot.wins / bot.total) * 100).toFixed(0) : '0';
               return (
                 <div
@@ -573,12 +660,12 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-medium text-slate-300 truncate">{bot.name}</span>
                     <span className={`text-[11px] font-bold ${pctColor}`}>
-                      {pnlSign}{bot.pnlPct.toFixed(1)}%
+                      {pnlSign}{bot.realizedPnlPct.toFixed(1)}%
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[10px] text-slate-500">
                     <span>${compact(bot.balance)}</span>
-                    <span className={pctColor}>{pnlSign}${compact(Math.abs(bot.pnl))}</span>
+                    <span className={pctColor}>{pnlSign}${compact(Math.abs(bot.realizedPnl))}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[10px] text-slate-600 mt-0.5">
                     <span>{bot.total} trades</span>
@@ -586,6 +673,12 @@ export default function BalanceChart({ bots, balanceHistory, trades, onBotFilter
                     <span className="text-rose-600">{bot.losses}L</span>
                     <span className="ml-auto text-slate-500">{winRate}% WR</span>
                   </div>
+                  {bot.pendingCount > 0 && (
+                    <div className="flex items-center gap-2 text-[10px] text-amber-500/70 mt-0.5">
+                      <span>{bot.pendingCount} pending</span>
+                      <span className="ml-auto">${compact(bot.pendingAmt)}</span>
+                    </div>
+                  )}
                 </div>
               );
             })}

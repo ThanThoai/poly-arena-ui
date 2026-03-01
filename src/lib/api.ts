@@ -44,6 +44,8 @@ export interface UserProfile {
   initial_balance: number;
   allocated_balance: number;
   available_balance: number;
+  total_balance: number;
+  total_pnl: number;
 }
 
 export interface Trade {
@@ -98,6 +100,7 @@ export interface Bot {
   initial_balance: number;
   user_id?: number | null;
   owner_name?: string | null;
+  user_initial_balance?: number | null;
   created_at: string | null;
 }
 
@@ -105,6 +108,14 @@ export interface BalanceHistory {
   id: number;
   bot_name: string;
   balance: number;
+  recorded_at: string | null;
+}
+
+export interface UserBalanceHistory {
+  id: number;
+  user_id: number;
+  balance: number;
+  trade_id: number | null;
   recorded_at: string | null;
 }
 

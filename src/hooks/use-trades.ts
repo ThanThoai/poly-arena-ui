@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { apiFetch, Trade, Bot, BalanceHistory, SchedulerStatus, PriceEntry, OrderbookEntry, AchievementDef, BotAchievement } from '@/lib/api';
+import { apiFetch, Trade, Bot, BalanceHistory, UserBalanceHistory, SchedulerStatus, PriceEntry, OrderbookEntry, AchievementDef, BotAchievement } from '@/lib/api';
 
 export interface DashboardData {
   trades: Trade[];
   bots: Bot[];
   balanceHistory: BalanceHistory[];
+  userBalanceHistory: UserBalanceHistory[];
   schedulerStatus: SchedulerStatus;
   achievementDefs: AchievementDef[];
   botAchievements: Record<number, BotAchievement[]>;
@@ -20,15 +21,16 @@ export function useDashboardData(intervalMs = 30_000) {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [trades, bots, balanceHistory, schedulerStatus, achievementDefs, botAchievements] = await Promise.all([
+      const [trades, bots, balanceHistory, userBalanceHistory, schedulerStatus, achievementDefs, botAchievements] = await Promise.all([
         apiFetch<Trade[]>('/binary-options?limit=500'),
         apiFetch<Bot[]>('/bots'),
         apiFetch<BalanceHistory[]>('/bots/balance-history'),
+        apiFetch<UserBalanceHistory[]>('/bots/user-balance-history').catch(() => [] as UserBalanceHistory[]),
         apiFetch<SchedulerStatus>('/dashboard/scheduler/status'),
         apiFetch<AchievementDef[]>('/achievements/').catch(() => [] as AchievementDef[]),
         apiFetch<Record<number, BotAchievement[]>>('/achievements/all-bots').catch(() => ({} as Record<number, BotAchievement[]>)),
       ]);
-      setData({ trades, bots, balanceHistory, schedulerStatus, achievementDefs, botAchievements });
+      setData({ trades, bots, balanceHistory, userBalanceHistory, schedulerStatus, achievementDefs, botAchievements });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error');

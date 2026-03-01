@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { useOrderbookWs } from '@/hooks/use-trades';
+import { usePolymarketOrderbook } from '@/hooks/use-polymarket-ws';
 import { OrderbookLevel } from '@/lib/api';
 import SymbolBadge from '@/components/ui/symbol-badge';
 import type { OrderbookSettings } from '@/lib/settings-types';
@@ -36,7 +36,6 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange, onSe
   const [selectedSymbol, setSelectedSymbol] = useState(initialSettings?.symbol ?? 'BTC');
   const [selectedTf, setSelectedTf] = useState(initialSettings?.timeframe ?? 'M5');
   const [open, setOpen] = useState(initialSettings?.open ?? true);
-  const [selectedSession, setSelectedSession] = useState<number | undefined>(undefined);
 
   // Tick that bumps at every candle boundary so session labels auto-update
   const [candleEpoch, setCandleEpoch] = useState(() => currentCandleOpen(selectedTf));
@@ -56,33 +55,40 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange, onSe
     return () => clearTimeout(timer);
   }, [selectedTf]);
 
-  const { orderbooks, connected } = useOrderbookWs(selectedSymbol, selectedTf);
+  // All session tabs are numeric candle-open timestamps
+  const [selectedSession, setSelectedSession] = useState<number>(() => currentCandleOpen(selectedTf));
 
-  // Always compute 4 session tabs: 1 past, current, 2 future
-  // undefined = current session (legacy key), numbers = session-keyed timestamps
+  // Reset selected session to current candle when timeframe changes
+  useEffect(() => {
+    setSelectedSession(candleEpoch);
+  }, [selectedTf, candleEpoch]);
+
+  const { orderbooks, connected } = usePolymarketOrderbook(selectedSymbol, selectedTf);
+
+  // 4 session tabs: 1 past, current, 2 future — all numeric timestamps
   const sessionTabs = useMemo(() => {
     const period = TF_SECONDS[selectedTf] ?? 300;
     const cur = candleEpoch;
     return [
       cur - period,       // previous
-      undefined,          // current (maps to legacy orderbook keys)
+      cur,                // current
       cur + period,       // next +1
       cur + period * 2,   // next +2
-    ] as (number | undefined)[];
+    ];
   }, [selectedTf, candleEpoch]);
 
-  // Reset selected session to current when it falls out of the tab range
+  // Reset selected session when it falls out of the tab range
   useEffect(() => {
-    if (selectedSession !== undefined && !sessionTabs.includes(selectedSession)) {
-      setSelectedSession(undefined);
+    if (!sessionTabs.includes(selectedSession)) {
+      setSelectedSession(candleEpoch);
       onSessionChange?.(0);
     }
-  }, [sessionTabs, selectedSession, onSessionChange]);
+  }, [sessionTabs, selectedSession, candleEpoch, onSessionChange]);
 
   // Emit session offset: future sessions → 1, current/past → 0
-  const handleSessionSelect = (s: number | undefined) => {
+  const handleSessionSelect = (s: number) => {
     setSelectedSession(s);
-    const isFuture = s !== undefined && s > candleEpoch;
+    const isFuture = s > candleEpoch;
     onSessionChange?.(isFuture ? 1 : 0);
   };
 
@@ -167,7 +173,7 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange, onSe
             {TIMEFRAMES.map((tf) => (
               <button
                 key={tf}
-                onClick={() => { setSelectedTf(tf); setSelectedSession(undefined); emitSettings({ timeframe: tf }); }}
+                onClick={() => { setSelectedTf(tf); emitSettings({ timeframe: tf }); }}
                 className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${
                   selectedTf === tf
                     ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
@@ -181,18 +187,17 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange, onSe
         </div>
       </div>
 
-      {/* Session tabs — always visible: 1 past + current + 2 future */}
+      {/* Session tabs — all numeric timestamps: 1 past + current + 2 future */}
       {open && (
         <div className="px-5 py-2 border-b border-[#1a1a2a] flex items-center gap-1 overflow-x-auto">
           <span className="text-[9px] text-slate-600 uppercase tracking-wide mr-1 shrink-0">Session</span>
           {sessionTabs.map((s) => {
-            const isCurrent = s === undefined;
-            const ts = s ?? candleEpoch;
-            const label = formatSessionTime(ts);
+            const isCurrent = s === candleEpoch;
+            const label = formatSessionTime(s);
             const isActive = s === selectedSession;
             return (
               <button
-                key={s ?? 'current'}
+                key={s}
                 onClick={() => handleSessionSelect(s)}
                 className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors whitespace-nowrap flex items-center gap-1 ${
                   isCurrent

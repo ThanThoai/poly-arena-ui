@@ -7,6 +7,10 @@ const nextConfig = {
         source: '/api/:path*',
         destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8099/poly-arena'}/:path*`,
       },
+      {
+        source: '/gamma-api/:path*',
+        destination: 'https://gamma-api.polymarket.com/:path*',
+      },
     ];
   },
 };

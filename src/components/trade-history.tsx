@@ -230,6 +230,7 @@ export default function TradeHistory({ trades, bots, initialSettings, onSettings
                   <th className="px-5 py-3 text-left font-medium">Type</th>
                   <th className="px-5 py-3 text-right font-medium">Amount</th>
                   <th className="px-5 py-3 text-right font-medium">Avg Price</th>
+                  <th className="px-5 py-3 text-right font-medium">Shares</th>
                   <th className="px-5 py-3 text-left font-medium">Result</th>
                   <th className="px-5 py-3 text-left font-medium">Exit</th>
                   <th className="px-5 py-3 text-right font-medium">Profit</th>
@@ -238,7 +239,7 @@ export default function TradeHistory({ trades, bots, initialSettings, onSettings
               </thead>
               <tbody>
                 {vis.length === 0 ? (
-                  <tr><td colSpan={12} className="px-5 py-12 text-center text-slate-600">No trades match filters</td></tr>
+                  <tr><td colSpan={13} className="px-5 py-12 text-center text-slate-600">No trades match filters</td></tr>
                 ) : (
                   vis.map((t) => <TradeRow key={t.id} trade={t} open={expandedRows.has(t.id)} onToggle={() => toggleDetail(t.id)} onTrace={() => setTraceTrade(t)} />)
                 )}
@@ -305,6 +306,7 @@ function TradeRow({ trade: t, open, onToggle, onTrace }: { trade: Trade; open: b
         <td className={`px-5 py-2.5 text-right font-mono text-xs ${t.avg_price != null ? 'text-violet-300' : 'text-slate-600'}`}>
           {t.avg_price != null ? fmtCents(t.avg_price) : '\u2014'}
         </td>
+        <td className="px-5 py-2.5 text-right text-sky-400">{t.num_shares != null ? Number(t.num_shares).toFixed(2) : '\u2014'}</td>
         <td className="px-5 py-2.5">{t.result ? <ResultPill result={t.result} trade={t} /> : '\u2014'}</td>
         <td className="px-5 py-2.5">
           {t.exit_trigger ? (
@@ -322,7 +324,7 @@ function TradeRow({ trade: t, open, onToggle, onTrace }: { trade: Trade; open: b
       </tr>
       {open && (
         <tr className="border-b border-[#0e0e1a]">
-          <td colSpan={12} style={{ background: '#09090f', borderLeft: '2px solid rgba(139,92,246,.3)' }}>
+          <td colSpan={13} style={{ background: '#09090f', borderLeft: '2px solid rgba(139,92,246,.3)' }}>
             <div className="px-5 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-8 gap-y-3">
               {/* Order Type */}
               <div>

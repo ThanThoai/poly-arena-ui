@@ -53,10 +53,12 @@ const TABS: Record<MainTab, TabConfig> = {
           { name: 'forecast', type: 'string', required: true, note: 'GREEN (price up) | RED (price down)' },
           { name: 'amount', type: 'number', required: true, note: 'Bet size in USD (> 0)' },
           { name: 'session_offset', type: 'number', required: false, note: '0 = current candle (default), 1 = next candle (A+1)' },
+          { name: 'timestamp', type: 'number', required: false, note: 'Unix timestamp (seconds) — target a specific candle session' },
           { name: 'reason', type: 'string', required: false, note: 'Optional note for your records' },
         ],
         examples: {
-          curl: `curl -X POST ${BO_URL}/ \\
+          curl: `# Using session_offset (next candle)
+curl -X POST ${BO_URL}/ \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: YOUR_API_KEY" \\
   -d '{
@@ -65,41 +67,59 @@ const TABS: Record<MainTab, TabConfig> = {
     "forecast":       "GREEN",
     "amount":         100,
     "session_offset": 1
+  }'
+
+# Using timestamp (target specific candle)
+curl -X POST ${BO_URL}/ \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: YOUR_API_KEY" \\
+  -d '{
+    "symbol":    "BTC",
+    "timeframe": "M5",
+    "forecast":  "GREEN",
+    "amount":    100,
+    "timestamp": 1772384100
   }'`,
-          python: `import requests
+          python: `import time, requests
+
+# Using timestamp — target the candle containing this moment
+ts = int(time.time()) + 300   # e.g. next M5 candle
 
 res = requests.post(
     "${BO_URL}/",
     headers={"x-api-key": "YOUR_API_KEY"},
     json={
-        "symbol":         "BTC",
-        "timeframe":      "M5",
-        "forecast":       "GREEN",
-        "amount":         100,
-        "session_offset": 1,   # trade on the next candle (A+1)
+        "symbol":    "BTC",
+        "timeframe": "M5",
+        "forecast":  "GREEN",
+        "amount":    100,
+        "timestamp": ts,   # system resolves candle from this ts
     },
 )
 trade = res.json()
-print(f"Trade #{trade['id']} — avg: {trade['avg_price']}")`,
-          js: `const res = await fetch("${BO_URL}/", {
+print(f"Trade #{trade['id']} — settlement: {trade['settlement_at']}")`,
+          js: `// Using timestamp — target the candle containing this moment
+const ts = Math.floor(Date.now() / 1000) + 300; // next M5
+
+const res = await fetch("${BO_URL}/", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
     "x-api-key": "YOUR_API_KEY",
   },
   body: JSON.stringify({
-    symbol:         "BTC",
-    timeframe:      "M5",
-    forecast:       "GREEN",
-    amount:         100,
-    session_offset: 1,   // trade on the next candle (A+1)
+    symbol:    "BTC",
+    timeframe: "M5",
+    forecast:  "GREEN",
+    amount:    100,
+    timestamp: ts,   // system resolves candle from this ts
   }),
 });
 
 const trade = await res.json();
-console.log(\`Trade #\${trade.id} — avg: \${trade.avg_price}\`);`,
+console.log(\`Trade #\${trade.id} — settlement: \${trade.settlement_at}\`);`,
         },
-        responseExample: `// session_offset=0 (default) — settles at current candle close
+        responseExample: `// timestamp=1772384100 → falls in candle 14:25–14:30
 {
   "id": 42,
   "symbol": "BTC",
@@ -109,15 +129,15 @@ console.log(\`Trade #\${trade.id} — avg: \${trade.avg_price}\`);`,
   "result": "PENDING",
   "avg_price": 0.5200,
   "num_shares": 192.3077,
-  "session_offset": 0,
-  "settlement_at": "2025-06-01T14:25:00Z"
-}
-
-// session_offset=1 — settles at next candle close
-{
-  "id": 43,
   "session_offset": 1,
   "settlement_at": "2025-06-01T14:30:00Z"
+}
+
+// session_offset=0 (default, no timestamp) — current candle
+{
+  "id": 43,
+  "session_offset": 0,
+  "settlement_at": "2025-06-01T14:25:00Z"
 }`,
       },
       {
@@ -132,6 +152,7 @@ console.log(\`Trade #\${trade.id} — avg: \${trade.avg_price}\`);`,
           { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
           { name: 'tp_price', type: 'number', required: true, note: 'Take profit price (must be > best_ask)' },
           { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
+          { name: 'timestamp', type: 'number', required: false, note: 'Unix ts — target a specific candle session' },
         ],
         examples: {
           curl: `curl -X POST ${BO_URL}/ \\
@@ -197,6 +218,7 @@ console.log(\`Market+TP #\${trade.id} — entry: \${trade.avg_price}\`);`,
           { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
           { name: 'sl_price', type: 'number', required: true, note: 'Stop loss price (must be < best_ask)' },
           { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
+          { name: 'timestamp', type: 'number', required: false, note: 'Unix ts — target a specific candle session' },
         ],
         examples: {
           curl: `curl -X POST ${BO_URL}/ \\
@@ -272,6 +294,7 @@ console.log(\`Market+SL #\${trade.id} — entry: \${trade.avg_price}\`);`,
           { name: 'limit_price', type: 'number', required: true, note: '0 < price < 1 — max buy price' },
           { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel after N seconds if unfilled' },
           { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
+          { name: 'timestamp', type: 'number', required: false, note: 'Unix ts — target a specific candle session' },
         ],
         examples: {
           curl: `curl -X POST ${BO_URL}/ \\
@@ -352,6 +375,7 @@ console.log(\`Limit #\${trade.id} — status: \${trade.me_order_status}\`);`,
           { name: 'tp_price', type: 'number', required: true, note: 'Take profit (must be > best_ask)' },
           { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel seconds' },
           { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
+          { name: 'timestamp', type: 'number', required: false, note: 'Unix ts — target a specific candle session' },
         ],
         examples: {
           curl: `curl -X POST ${BO_URL}/ \\
@@ -421,6 +445,7 @@ console.log(\`Limit+TP #\${trade.id} — tp: \${trade.tp_price}\`);`,
           { name: 'sl_price', type: 'number', required: true, note: 'Stop loss (must be < best_ask)' },
           { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel seconds' },
           { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
+          { name: 'timestamp', type: 'number', required: false, note: 'Unix ts — target a specific candle session' },
         ],
         examples: {
           curl: `curl -X POST ${BO_URL}/ \\
@@ -633,9 +658,10 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
             >
               <span className="text-sky-400 shrink-0 mt-px">ℹ</span>
               <span className="text-slate-400">
-                <strong className="text-slate-300">Session Offset:</strong>{' '}
-                <code className="text-sky-300">session_offset=0</code> (default) settles at the current candle close.{' '}
-                <code className="text-sky-300">session_offset=1</code> trades on the <em>next</em> candle (A+1) — settles one candle later.
+                <strong className="text-slate-300">Session Targeting:</strong> use{' '}
+                <code className="text-sky-300">session_offset</code> (0 = current, 1 = next) or{' '}
+                <code className="text-sky-300">timestamp</code> (Unix seconds) to target a specific candle.
+                The system resolves which candle the timestamp falls in. Max = next session (current + 1 candle ahead).
               </span>
             </div>
           </div>

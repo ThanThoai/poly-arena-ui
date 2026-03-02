@@ -7,7 +7,7 @@ import { useSettings } from '@/hooks/use-settings';
 import Header from '@/components/header';
 import KpiCards from '@/components/kpi-cards';
 import BalanceChart from '@/components/balance-chart';
-import BotPerformance from '@/components/bot-performance';
+
 import PositionsTable from '@/components/positions-table';
 import TradeHistory from '@/components/trade-history';
 import CreateBotModal from '@/components/modals/create-bot-modal';
@@ -20,6 +20,7 @@ import TradingViewCharts from '@/components/tradingview-charts';
 import OrderbookDepth from '@/components/orderbook-depth';
 import ReportPage from '@/components/report-page';
 import BotManagerPage from '@/components/bot-manager-page';
+import AdminPage from '@/components/admin-page';
 import Toast from '@/components/ui/toast';
 
 export default function Dashboard() {
@@ -33,8 +34,7 @@ export default function Dashboard() {
   const [showRegisterBo, setShowRegisterBo] = useState(false);
   const [showApiExample, setShowApiExample] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
-  const [selectedBots, setSelectedBots] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'report' | 'bots'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'report' | 'bots' | 'admin'>('dashboard');
   const [botRefreshKey, setBotRefreshKey] = useState(0);
   const [sessionOffset, setSessionOffset] = useState(0);
 
@@ -55,12 +55,9 @@ export default function Dashboard() {
     refresh();
   };
 
-  const handleBotFilterChange = (selected: Set<string>) => {
-    setSelectedBots(selected.size >= 1 ? [...selected] : []);
-  };
-
-  const handleTabChange = (tab: 'dashboard' | 'report' | 'bots') => {
+  const handleTabChange = (tab: 'dashboard' | 'report' | 'bots' | 'admin') => {
     if (tab === 'bots' && !user) return;
+    if (tab === 'admin' && !user?.is_admin) return;
     setActiveTab(tab);
   };
 
@@ -76,6 +73,7 @@ export default function Dashboard() {
   const bots = data?.bots ?? [];
   const balanceHistory = data?.balanceHistory ?? [];
   const userBalanceHistory = data?.userBalanceHistory ?? [];
+  const userPnls = data?.userPnls ?? [];
   const schedulerStatus = data?.schedulerStatus ?? null;
   const botAchievements = data?.botAchievements ?? {};
 
@@ -93,7 +91,9 @@ export default function Dashboard() {
         trades={trades}
       />
 
-      {activeTab === 'report' ? (
+      {activeTab === 'admin' && user?.is_admin ? (
+        <AdminPage />
+      ) : activeTab === 'report' ? (
         <ReportPage trades={trades} bots={bots} botAchievements={botAchievements} />
       ) : activeTab === 'bots' && user ? (
         <BotManagerPage
@@ -110,20 +110,11 @@ export default function Dashboard() {
             botPnls={data?.botPnls ?? []}
             balanceHistory={balanceHistory}
             userBalanceHistory={userBalanceHistory}
+            userPnls={userPnls}
             trades={trades}
-            onBotFilterChange={handleBotFilterChange}
             initialSettings={settings.balanceChart}
             onSettingsChange={(s) => updateSettings({ balanceChart: s })}
           />
-
-          {selectedBots.length > 0 && (
-            <BotPerformance
-              selectedBots={selectedBots}
-              trades={trades}
-              bots={bots}
-              onClose={() => setSelectedBots([])}
-            />
-          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <TradingViewCharts
@@ -140,6 +131,7 @@ export default function Dashboard() {
           <PositionsTable
             trades={trades}
             bots={bots}
+            isAdmin={user?.is_admin}
             sessionOffset={sessionOffset}
             initialSettings={settings.positions}
             onSettingsChange={(s) => updateSettings({ positions: s })}
@@ -148,6 +140,7 @@ export default function Dashboard() {
           <TradeHistory
             trades={trades}
             bots={bots}
+            isAdmin={user?.is_admin}
             initialSettings={settings.tradeHistory}
             onSettingsChange={(s) => updateSettings({ tradeHistory: s })}
           />

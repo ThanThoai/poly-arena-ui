@@ -7,18 +7,20 @@ import SymbolBadge from '@/components/ui/symbol-badge';
 import { OrderTypeBadge, BracketBadges, OrderStatusBadge } from '@/components/ui/order-badges';
 import CustomSelect from '@/components/ui/custom-select';
 import OrderTraceModal from '@/components/modals/order-trace-modal';
+import InspectorModal from '@/components/modals/inspector-modal';
 import TraceTimeline from '@/components/ui/trace-timeline';
 import type { PositionsSettings } from '@/lib/settings-types';
 
 interface PositionsTableProps {
   trades: Trade[];
   bots: Bot[];
+  isAdmin?: boolean;
   sessionOffset?: number;
   initialSettings?: PositionsSettings;
   onSettingsChange?: (s: PositionsSettings) => void;
 }
 
-export default function PositionsTable({ trades, bots, sessionOffset, initialSettings, onSettingsChange }: PositionsTableProps) {
+export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, initialSettings, onSettingsChange }: PositionsTableProps) {
   const [botFilter, setBotFilter] = useState(initialSettings?.botFilter ?? '');
   const [symbolFilter, setSymbolFilter] = useState(initialSettings?.symbolFilter ?? '');
   const [timeframeFilter, setTimeframeFilter] = useState(initialSettings?.tfFilter ?? '');
@@ -28,6 +30,7 @@ export default function PositionsTable({ trades, bots, sessionOffset, initialSet
   const [currentPage, setCurrentPage] = useState(1);
   const [tick, setTick] = useState(0);
   const [traceTrade, setTraceTrade] = useState<Trade | null>(null);
+  const [inspectTrade, setInspectTrade] = useState<Trade | null>(null);
 
   const emitPositionSettings = (patch: Partial<PositionsSettings>) => {
     onSettingsChange?.({ botFilter, symbolFilter, tfFilter: timeframeFilter, typeFilter, forecastFilter, ...patch });
@@ -178,6 +181,7 @@ export default function PositionsTable({ trades, bots, sessionOffset, initialSet
               <th className="px-4 py-2.5 text-left font-medium">Forecast</th>
               <th className="px-4 py-2.5 text-left font-medium">Type</th>
               <th className="px-4 py-2.5 text-right font-medium">Amount</th>
+              <th className="px-4 py-2.5 text-right font-medium">Fee</th>
               <th className="px-4 py-2.5 text-right font-medium">Avg Price</th>
               <th className="px-4 py-2.5 text-right font-medium">Shares</th>
               <th className="px-4 py-2.5 text-left font-medium">Status</th>
@@ -188,7 +192,7 @@ export default function PositionsTable({ trades, bots, sessionOffset, initialSet
           </thead>
           <tbody>
             {paged.length === 0 ? (
-              <tr><td colSpan={13} className="px-5 py-8 text-center text-slate-600">No open positions</td></tr>
+              <tr><td colSpan={14} className="px-5 py-8 text-center text-slate-600">No open positions</td></tr>
             ) : (
               paged.map((t) => {
                 const open = expandedRows.has(t.id);
@@ -236,6 +240,8 @@ export default function PositionsTable({ trades, bots, sessionOffset, initialSet
                     candleActive={candleActive}
                     onToggle={() => toggleDetail(t.id)}
                     onTrace={() => setTraceTrade(t)}
+                    isAdmin={isAdmin}
+                    onInspect={() => setInspectTrade(t)}
                   />
                 );
               })
@@ -253,6 +259,7 @@ export default function PositionsTable({ trades, bots, sessionOffset, initialSet
       </div>
 
       <OrderTraceModal open={traceTrade !== null} onClose={() => setTraceTrade(null)} trade={traceTrade} />
+      <InspectorModal open={inspectTrade !== null} onClose={() => setInspectTrade(null)} trade={inspectTrade} />
     </div>
   );
 }
@@ -272,6 +279,8 @@ function PositionRow({
   candleActive,
   onToggle,
   onTrace,
+  isAdmin,
+  onInspect,
 }: {
   trade: Trade;
   open: boolean;
@@ -287,6 +296,8 @@ function PositionRow({
   candleActive: boolean;
   onToggle: () => void;
   onTrace: () => void;
+  isAdmin?: boolean;
+  onInspect: () => void;
 }) {
   const settled = dtParts(t.settlement_at);
 
@@ -360,6 +371,9 @@ function PositionRow({
           </div>
         </td>
         <td className="px-4 py-2.5 text-right text-slate-200">${t.amount.toFixed(2)}</td>
+        <td className="px-4 py-2.5 text-right text-slate-500 text-[11px]">
+          {t.entry_fee != null && t.entry_fee > 0 ? `$${t.entry_fee.toFixed(2)}` : '\u2014'}
+        </td>
         <td className="px-4 py-2.5 text-right text-violet-400">{fmtCents(t.avg_price)}</td>
         <td className="px-4 py-2.5 text-right text-sky-400">{t.num_shares != null ? Number(t.num_shares).toFixed(2) : '\u2014'}</td>
         <td className="px-4 py-2.5">
@@ -437,7 +451,7 @@ function PositionRow({
       </tr>
       {open && (
         <tr className="border-b border-[#0e0e1a]">
-          <td colSpan={13} style={{ background: '#09090f', borderLeft: '2px solid rgba(139,92,246,.3)' }}>
+          <td colSpan={14} style={{ background: '#09090f', borderLeft: '2px solid rgba(139,92,246,.3)' }}>
             <div className="px-5 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-8 gap-y-3">
               {/* Order Type */}
               <div>
@@ -606,6 +620,15 @@ function PositionRow({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
                   Order Trace
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onInspect(); }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-sky-400 hover:text-sky-300 border border-sky-500/20 hover:border-sky-500/40 hover:bg-sky-500/5 transition-all"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  Inspector
                 </button>
                 {t.traces && t.traces.length > 0 && (
                   <span className="text-[10px] text-slate-600">{t.traces.length} trace{t.traces.length !== 1 ? 's' : ''}</span>

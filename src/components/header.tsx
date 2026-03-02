@@ -10,8 +10,8 @@ interface HeaderProps {
   onRefresh: () => Promise<void>;
   onApiExample: () => void;
   onLogin: () => void;
-  activeTab?: 'dashboard' | 'report' | 'bots';
-  onTabChange?: (tab: 'dashboard' | 'report' | 'bots') => void;
+  activeTab?: 'dashboard' | 'report' | 'bots' | 'admin';
+  onTabChange?: (tab: 'dashboard' | 'report' | 'bots' | 'admin') => void;
   bots?: Bot[];
   trades?: Trade[];
 }
@@ -60,10 +60,11 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
     return { total, pct, totalInitial, totalCurrent };
   }, [bots, user]);
 
-  const tabs: Array<{ key: 'dashboard' | 'report' | 'bots'; label: string; authOnly?: boolean }> = [
+  const tabs: Array<{ key: 'dashboard' | 'report' | 'bots' | 'admin'; label: string; authOnly?: boolean; adminOnly?: boolean }> = [
     { key: 'dashboard', label: 'Dashboard' },
     { key: 'report', label: 'Report' },
     { key: 'bots', label: 'Bot Manager', authOnly: true },
+    { key: 'admin', label: 'Admin', adminOnly: true },
   ];
 
   return (
@@ -83,7 +84,7 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
         {onTabChange && (
           <div className="flex items-center gap-1 ml-2">
             {tabs
-              .filter((t) => !t.authOnly || user)
+              .filter((t) => (!t.authOnly || user) && (!t.adminOnly || user?.is_admin))
               .map((t) => (
                 <button
                   key={t.key}

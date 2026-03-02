@@ -46,6 +46,17 @@ export interface UserProfile {
   available_balance: number;
   total_balance: number;
   total_pnl: number;
+  is_admin: boolean;
+}
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  email: string;
+  initial_balance: number;
+  is_active: boolean;
+  is_admin: boolean;
+  created_at: string | null;
 }
 
 export interface Trade {
@@ -90,12 +101,15 @@ export interface Trade {
   }[] | null;
   position_closed: boolean | null;
   session_offset: number | null;
+  entry_fee: number | null;
 }
 
 export interface Bot {
   id: number;
   bot_name: string;
   api_key?: string;
+  is_active?: boolean;
+  status: string;
   balance: number;
   initial_balance: number;
   user_id?: number | null;
@@ -131,6 +145,7 @@ export interface BotPnl {
   total_trades: number;
   win_rate: number;
   avg_profit_per_trade: number;
+  total_fees: number;
 }
 
 export interface SchedulerStatus {
@@ -167,6 +182,67 @@ export interface BotAchievement {
   tier: string;
   earned_at: string | null;
   metadata_: Record<string, unknown> | null;
+}
+
+export interface PriceHistoryEntry {
+  id: number;
+  symbol: string;
+  timeframe: string;
+  direction: string;
+  best_ask: number | null;
+  best_bid: number | null;
+  bids: [number, number][] | null;  // [[price, size], ...]
+  asks: [number, number][] | null;  // [[price, size], ...]
+  recorded_at: string | null;
+}
+
+// ── Trade Inspector types ────────────────────────────────────────────────────
+
+export interface TimelineEvent {
+  timestamp: string;
+  category: 'trace' | 'price' | 'fill_entry' | 'fill_exit';
+  action: string;
+  details: string;
+  data?: Record<string, unknown> | unknown[] | null;
+}
+
+export interface SessionInfo {
+  symbol: string;
+  timeframe: string;
+  direction: string;
+  session_start: number;
+  session_end: number;
+}
+
+export interface TradeInspectResponse {
+  trade: Trade;
+  timeline: TimelineEvent[];
+  session: SessionInfo;
+}
+
+export async function inspectTrade(tradeId: number): Promise<TradeInspectResponse> {
+  return apiFetch<TradeInspectResponse>(`/binary-options/inspect/${tradeId}`);
+}
+
+// ── User P&L types ──────────────────────────────────────────────────────────
+
+export interface UserPnl {
+  user_id: number;
+  username: string;
+  initial_balance: number;
+  allocated_balance: number;
+  available_balance: number;
+  current_balance: number;
+  realized_pnl: number;
+  realized_pnl_pct: number;
+  wins: number;
+  losses: number;
+  pending: number;
+  total_trades: number;
+  win_rate: number;
+  avg_profit_per_trade: number;
+  total_fees: number;
+  bots: BotPnl[];
 }
 
 export interface OrderbookLevel {

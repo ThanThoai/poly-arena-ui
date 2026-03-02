@@ -140,138 +140,6 @@ console.log(\`Trade #\${trade.id} — settlement: \${trade.settlement_at}\`);`,
   "settlement_at": "2025-06-01T14:25:00Z"
 }`,
       },
-      {
-        id: 'market-tp',
-        label: 'Take Profit',
-        description:
-          'Market order with Take Profit. The matching engine monitors real-time bid price and auto-exits when bid >= tp_price. TP must be higher than current best ask (pre-validated by server).',
-        fields: [
-          { name: 'symbol', type: 'string', required: true, note: 'BTC | ETH | SOL | XRP' },
-          { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
-          { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
-          { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
-          { name: 'tp_price', type: 'number', required: true, note: 'Take profit price (must be > best_ask)' },
-          { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
-          { name: 'timestamp', type: 'number', required: false, note: 'Unix ts — target a specific candle session' },
-        ],
-        examples: {
-          curl: `curl -X POST ${BO_URL}/ \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: YOUR_API_KEY" \\
-  -d '{
-    "symbol":    "BTC",
-    "timeframe": "M5",
-    "forecast":  "GREEN",
-    "amount":    200,
-    "tp_price":  0.70
-  }'`,
-          python: `res = requests.post(
-    "${BO_URL}/",
-    headers={"x-api-key": "YOUR_API_KEY"},
-    json={
-        "symbol":    "BTC",
-        "timeframe": "M5",
-        "forecast":  "GREEN",
-        "amount":    200,
-        "tp_price":  0.70,   # auto-exit when bid >= 0.70
-    },
-)
-trade = res.json()
-print(f"Market+TP #{trade['id']} — entry: {trade['avg_price']}")`,
-          js: `const res = await fetch("${BO_URL}/", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": "YOUR_API_KEY",
-  },
-  body: JSON.stringify({
-    symbol:    "BTC",
-    timeframe: "M5",
-    forecast:  "GREEN",
-    amount:    200,
-    tp_price:  0.70,   // auto-exit when bid >= 0.70
-  }),
-});
-
-const trade = await res.json();
-console.log(\`Market+TP #\${trade.id} — entry: \${trade.avg_price}\`);`,
-        },
-        responseExample: `{
-  "id": 43,
-  "amount": 200,
-  "avg_price": 0.5200,
-  "num_shares": 384.6154,
-  "tp_price": 0.70,
-  "me_order_status": "PREFILLED",
-  "result": "PENDING"
-}`,
-      },
-      {
-        id: 'market-sl',
-        label: 'Stop Loss',
-        description:
-          'Market order with Stop Loss. The matching engine monitors real-time bid price and auto-exits when bid <= sl_price. SL must be lower than current best ask (pre-validated by server).',
-        fields: [
-          { name: 'symbol', type: 'string', required: true, note: 'BTC | ETH | SOL | XRP' },
-          { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
-          { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
-          { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
-          { name: 'sl_price', type: 'number', required: true, note: 'Stop loss price (must be < best_ask)' },
-          { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
-          { name: 'timestamp', type: 'number', required: false, note: 'Unix ts — target a specific candle session' },
-        ],
-        examples: {
-          curl: `curl -X POST ${BO_URL}/ \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: YOUR_API_KEY" \\
-  -d '{
-    "symbol":    "BTC",
-    "timeframe": "M5",
-    "forecast":  "GREEN",
-    "amount":    200,
-    "sl_price":  0.35
-  }'`,
-          python: `res = requests.post(
-    "${BO_URL}/",
-    headers={"x-api-key": "YOUR_API_KEY"},
-    json={
-        "symbol":    "BTC",
-        "timeframe": "M5",
-        "forecast":  "GREEN",
-        "amount":    200,
-        "sl_price":  0.35,   # auto-exit when bid <= 0.35
-    },
-)
-trade = res.json()
-print(f"Market+SL #{trade['id']} — entry: {trade['avg_price']}")`,
-          js: `const res = await fetch("${BO_URL}/", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": "YOUR_API_KEY",
-  },
-  body: JSON.stringify({
-    symbol:    "BTC",
-    timeframe: "M5",
-    forecast:  "GREEN",
-    amount:    200,
-    sl_price:  0.35,   // auto-exit when bid <= 0.35
-  }),
-});
-
-const trade = await res.json();
-console.log(\`Market+SL #\${trade.id} — entry: \${trade.avg_price}\`);`,
-        },
-        responseExample: `{
-  "id": 44,
-  "amount": 200,
-  "avg_price": 0.5200,
-  "num_shares": 384.6154,
-  "sl_price": 0.35,
-  "me_order_status": "PREFILLED",
-  "result": "PENDING"
-}`,
-      },
     ],
   },
 
@@ -357,146 +225,6 @@ console.log(\`Limit #\${trade.id} — status: \${trade.me_order_status}\`);`,
   "limit_price": 0.45,
   "avg_price": 0.4300,
   "num_shares": 465.1163,
-  "me_order_status": "FILLED",
-  "result": "PENDING"
-}`,
-      },
-      {
-        id: 'limit-tp',
-        label: 'Take Profit',
-        description:
-          'Limit order with Take Profit. If filled immediately, the order is sent to the Matching Engine for TP monitoring. If queued, TP is monitored after the limit fill. Auto-exits when bid >= tp_price.',
-        fields: [
-          { name: 'symbol', type: 'string', required: true, note: 'BTC | ETH | SOL | XRP' },
-          { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
-          { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
-          { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
-          { name: 'limit_price', type: 'number', required: true, note: 'Max buy price' },
-          { name: 'tp_price', type: 'number', required: true, note: 'Take profit (must be > best_ask)' },
-          { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel seconds' },
-          { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
-          { name: 'timestamp', type: 'number', required: false, note: 'Unix ts — target a specific candle session' },
-        ],
-        examples: {
-          curl: `curl -X POST ${BO_URL}/ \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: YOUR_API_KEY" \\
-  -d '{
-    "symbol":      "BTC",
-    "timeframe":   "M5",
-    "forecast":    "GREEN",
-    "amount":      300,
-    "limit_price": 0.45,
-    "tp_price":    0.70
-  }'`,
-          python: `res = requests.post(
-    "${BO_URL}/",
-    headers={"x-api-key": "YOUR_API_KEY"},
-    json={
-        "symbol":      "BTC",
-        "timeframe":   "M5",
-        "forecast":    "GREEN",
-        "amount":      300,
-        "limit_price": 0.45,
-        "tp_price":    0.70,   # auto-exit when bid >= 0.70
-    },
-)
-trade = res.json()
-print(f"Limit+TP #{trade['id']} — tp: {trade['tp_price']}")`,
-          js: `const res = await fetch("${BO_URL}/", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": "YOUR_API_KEY",
-  },
-  body: JSON.stringify({
-    symbol:      "BTC",
-    timeframe:   "M5",
-    forecast:    "GREEN",
-    amount:      300,
-    limit_price: 0.45,
-    tp_price:    0.70,
-  }),
-});
-
-const trade = await res.json();
-console.log(\`Limit+TP #\${trade.id} — tp: \${trade.tp_price}\`);`,
-        },
-        responseExample: `{
-  "id": 51,
-  "limit_price": 0.45,
-  "tp_price": 0.70,
-  "avg_price": 0.4300,
-  "me_order_status": "FILLED",
-  "result": "PENDING"
-}`,
-      },
-      {
-        id: 'limit-sl',
-        label: 'Stop Loss',
-        description:
-          'Limit order with Stop Loss. Works like Limit+TP but monitors the downside. Auto-exits when bid <= sl_price after the limit order fills.',
-        fields: [
-          { name: 'symbol', type: 'string', required: true, note: 'BTC | ETH | SOL | XRP' },
-          { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
-          { name: 'forecast', type: 'string', required: true, note: 'GREEN | RED' },
-          { name: 'amount', type: 'number', required: true, note: 'Bet size in USD' },
-          { name: 'limit_price', type: 'number', required: true, note: 'Max buy price' },
-          { name: 'sl_price', type: 'number', required: true, note: 'Stop loss (must be < best_ask)' },
-          { name: 'ttl', type: 'number', required: false, note: 'Auto-cancel seconds' },
-          { name: 'session_offset', type: 'number', required: false, note: '0 = current candle, 1 = next candle' },
-          { name: 'timestamp', type: 'number', required: false, note: 'Unix ts — target a specific candle session' },
-        ],
-        examples: {
-          curl: `curl -X POST ${BO_URL}/ \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: YOUR_API_KEY" \\
-  -d '{
-    "symbol":      "BTC",
-    "timeframe":   "M5",
-    "forecast":    "GREEN",
-    "amount":      300,
-    "limit_price": 0.45,
-    "sl_price":    0.30
-  }'`,
-          python: `res = requests.post(
-    "${BO_URL}/",
-    headers={"x-api-key": "YOUR_API_KEY"},
-    json={
-        "symbol":      "BTC",
-        "timeframe":   "M5",
-        "forecast":    "GREEN",
-        "amount":      300,
-        "limit_price": 0.45,
-        "sl_price":    0.30,   # auto-exit when bid <= 0.30
-    },
-)
-trade = res.json()
-print(f"Limit+SL #{trade['id']} — sl: {trade['sl_price']}")`,
-          js: `const res = await fetch("${BO_URL}/", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": "YOUR_API_KEY",
-  },
-  body: JSON.stringify({
-    symbol:      "BTC",
-    timeframe:   "M5",
-    forecast:    "GREEN",
-    amount:      300,
-    limit_price: 0.45,
-    sl_price:    0.30,
-  }),
-});
-
-const trade = await res.json();
-console.log(\`Limit+SL #\${trade.id} — sl: \${trade.sl_price}\`);`,
-        },
-        responseExample: `{
-  "id": 52,
-  "limit_price": 0.45,
-  "sl_price": 0.30,
-  "avg_price": 0.4300,
   "me_order_status": "FILLED",
   "result": "PENDING"
 }`,
@@ -602,26 +330,7 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
               {TABS[t.id].title}
             </button>
           ))}
-        </div>
 
-        {/* ── Sub-tabs (Basic / TP / SL) ───────────────────────────────────── */}
-        <div
-          className="px-4 py-1.5 flex gap-1 shrink-0"
-          style={{ background: '#0b0b14', borderBottom: '1px solid #13132a' }}
-        >
-          {config.subsections.map((s, i) => (
-            <button
-              key={s.id}
-              onClick={() => setSubIdx(i)}
-              className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${
-                subIdx === i
-                  ? 'bg-white/5 text-slate-200 border border-white/10'
-                  : 'text-slate-500 hover:text-slate-300 border border-transparent'
-              }`}
-            >
-              {s.label}
-            </button>
-          ))}
           <div className="flex-1" />
           <div className="flex items-center gap-1.5 text-[10px] text-slate-600">
             <span
@@ -639,31 +348,18 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
           {/* Description */}
           <p className="text-[12px] text-slate-400 leading-relaxed">{sub.description}</p>
 
-          {/* Hints */}
-          <div className="space-y-2">
-            <div
-              className="flex items-start gap-2 px-3 py-2 rounded-lg text-[11px]"
-              style={{ background: '#14142a', border: '1px solid #1f1f3a' }}
-            >
-              <span className="text-amber-400 shrink-0 mt-px">⚠</span>
-              <span className="text-slate-400">
-                <strong className="text-slate-300">Single Condition Policy:</strong> each order supports{' '}
-                <code className="text-violet-300">tp_price</code> OR{' '}
-                <code className="text-violet-300">sl_price</code>, never both.
-              </span>
-            </div>
-            <div
-              className="flex items-start gap-2 px-3 py-2 rounded-lg text-[11px]"
-              style={{ background: '#0a1420', border: '1px solid #1a2a3a' }}
-            >
-              <span className="text-sky-400 shrink-0 mt-px">ℹ</span>
-              <span className="text-slate-400">
-                <strong className="text-slate-300">Session Targeting:</strong> use{' '}
-                <code className="text-sky-300">session_offset</code> (0 = current, 1 = next) or{' '}
-                <code className="text-sky-300">timestamp</code> (Unix seconds) to target a specific candle.
-                The system resolves which candle the timestamp falls in. Max = next session (current + 1 candle ahead).
-              </span>
-            </div>
+          {/* Hint */}
+          <div
+            className="flex items-start gap-2 px-3 py-2 rounded-lg text-[11px]"
+            style={{ background: '#0a1420', border: '1px solid #1a2a3a' }}
+          >
+            <span className="text-sky-400 shrink-0 mt-px">ℹ</span>
+            <span className="text-slate-400">
+              <strong className="text-slate-300">Session Targeting:</strong> use{' '}
+              <code className="text-sky-300">session_offset</code> (0 = current, 1 = next) or{' '}
+              <code className="text-sky-300">timestamp</code> (Unix seconds) to target a specific candle.
+              The system resolves which candle the timestamp falls in. Max = next session (current + 1 candle ahead).
+            </span>
           </div>
 
           {/* Fields table */}
@@ -760,7 +456,7 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
           </svg>
           All endpoints require <code className="text-slate-400 mx-1">x-api-key</code> header.
-          Only <code className="text-slate-400 mx-1">tp_price</code> OR <code className="text-slate-400 mx-1">sl_price</code> — not both.
+          Set <code className="text-slate-400 mx-1">limit_price</code> for limit orders, omit for market orders.
         </div>
       </div>
     </div>

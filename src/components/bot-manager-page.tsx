@@ -20,6 +20,8 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
   const [renameError, setRenameError] = useState('');
   const [renameSubmitting, setRenameSubmitting] = useState(false);
   const [visibleKeys, setVisibleKeys] = useState<Set<number>>(new Set());
+  const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   const fetchMyBots = useCallback(async () => {
     try {
@@ -48,6 +50,49 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
   const copyKey = (key: string) => {
     navigator.clipboard.writeText(key);
     showToast('API key copied', 'ok');
+  };
+
+  const pauseBot = async (botId: number) => {
+    setActionLoading(botId);
+    try {
+      await apiFetch(`/bots/${botId}/pause`, { method: 'PATCH' });
+      showToast('Bot paused', 'ok');
+      fetchMyBots();
+      onRefresh();
+    } catch (ex) {
+      showToast(ex instanceof Error ? ex.message : 'Failed to pause bot', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const resumeBot = async (botId: number) => {
+    setActionLoading(botId);
+    try {
+      await apiFetch(`/bots/${botId}/resume`, { method: 'PATCH' });
+      showToast('Bot resumed', 'ok');
+      fetchMyBots();
+      onRefresh();
+    } catch (ex) {
+      showToast(ex instanceof Error ? ex.message : 'Failed to resume bot', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const deleteBot = async (botId: number) => {
+    setActionLoading(botId);
+    try {
+      const res = await apiFetch<{ detail: string; refunded: number }>(`/bots/${botId}`, { method: 'DELETE' });
+      showToast(res.detail, 'ok');
+      setConfirmDeleteId(null);
+      fetchMyBots();
+      onRefresh();
+    } catch (ex) {
+      showToast(ex instanceof Error ? ex.message : 'Failed to delete bot', 'error');
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const startRename = (bot: Bot) => {
@@ -134,6 +179,7 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
               <thead>
                 <tr className="text-slate-500 uppercase tracking-wider border-b border-[#1a1a2e]">
                   <th className="text-left px-5 py-2.5 font-medium">Name</th>
+                  <th className="text-center px-5 py-2.5 font-medium">Status</th>
                   <th className="text-left px-5 py-2.5 font-medium">API Key</th>
                   <th className="text-right px-5 py-2.5 font-medium">Initial</th>
                   <th className="text-right px-5 py-2.5 font-medium">Balance</th>
@@ -181,6 +227,13 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
                           bot.bot_name
                         )}
                       </td>
+                      <td className="px-5 py-3 text-center">
+                        {(() => {
+                          const s = bot.status || 'ACTIVE';
+                          const color = s === 'ACTIVE' ? 'text-emerald-400 bg-emerald-400/10' : s === 'PAUSED' ? 'text-amber-400 bg-amber-400/10' : 'text-rose-400 bg-rose-400/10';
+                          return <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${color}`}>{s}</span>;
+                        })()}
+                      </td>
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-1.5">
                           <code className="text-[10px] text-slate-500 font-mono max-w-[140px] truncate">
@@ -227,14 +280,61 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
                         {bot.created_at ? new Date(bot.created_at).toLocaleDateString() : '-'}
                       </td>
                       <td className="px-5 py-3 text-center">
-                        {!isRenaming && (
-                          <button
-                            onClick={() => startRename(bot)}
-                            className="text-amber-400 hover:text-amber-300 text-[10px] font-medium"
-                          >
-                            Rename
-                          </button>
-                        )}
+                        <div className="flex items-center justify-center gap-2">
+                          {!isRenaming && (
+                            <button
+                              onClick={() => startRename(bot)}
+                              className="text-amber-400 hover:text-amber-300 text-[10px] font-medium"
+                            >
+                              Rename
+                            </button>
+                          )}
+                          {bot.status === 'ACTIVE' && (
+                            <button
+                              onClick={() => pauseBot(bot.id)}
+                              disabled={actionLoading === bot.id}
+                              className="text-amber-400 hover:text-amber-300 text-[10px] font-medium"
+                            >
+                              {actionLoading === bot.id ? '...' : 'Pause'}
+                            </button>
+                          )}
+                          {bot.status === 'PAUSED' && (
+                            <button
+                              onClick={() => resumeBot(bot.id)}
+                              disabled={actionLoading === bot.id}
+                              className="text-emerald-400 hover:text-emerald-300 text-[10px] font-medium"
+                            >
+                              {actionLoading === bot.id ? '...' : 'Resume'}
+                            </button>
+                          )}
+                          {bot.status !== 'DELETED' && (
+                            confirmDeleteId === bot.id ? (
+                              <span className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-slate-400">Sure?</span>
+                                <button
+                                  onClick={() => deleteBot(bot.id)}
+                                  disabled={actionLoading === bot.id}
+                                  className="text-rose-400 hover:text-rose-300 text-[10px] font-semibold"
+                                >
+                                  {actionLoading === bot.id ? '...' : 'Yes'}
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="text-slate-500 hover:text-slate-300 text-[10px]"
+                                >
+                                  No
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => setConfirmDeleteId(bot.id)}
+                                className="text-rose-400/70 hover:text-rose-400 text-[10px] font-medium"
+                              >
+                                Delete
+                              </button>
+                            )
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

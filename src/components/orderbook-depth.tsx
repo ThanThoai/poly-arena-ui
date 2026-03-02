@@ -11,12 +11,14 @@ const TIMEFRAMES = ['M5', 'M15', 'H1'];
 
 const TF_SECONDS: Record<string, number> = { M5: 300, M15: 900, H1: 3600 };
 
-/** Format a Unix timestamp as HH:MM in the client's local timezone. */
+/** Format a Unix timestamp as session time in the client's local timezone.
+ *  Examples: 10h, 10h05, 10h15, 11h */
 function formatSessionTime(ts: number): string {
   const d = new Date(ts * 1000);
-  const hh = d.getHours().toString().padStart(2, '0');
-  const mm = d.getMinutes().toString().padStart(2, '0');
-  return `${hh}:${mm}`;
+  const hh = d.getHours();
+  const mm = d.getMinutes();
+  if (mm === 0) return `${hh}h`;
+  return `${hh}h${mm.toString().padStart(2, '0')}`;
 }
 
 /** Compute current candle-open timestamp for a given timeframe. */
@@ -40,6 +42,9 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange, onSe
   // Tick that bumps at every candle boundary so session labels auto-update
   const [candleEpoch, setCandleEpoch] = useState(() => currentCandleOpen(selectedTf));
   useEffect(() => {
+    // Immediately recalculate for the new timeframe
+    setCandleEpoch(currentCandleOpen(selectedTf));
+
     const period = TF_SECONDS[selectedTf] ?? 300;
     const schedule = () => {
       const now = Math.floor(Date.now() / 1000);

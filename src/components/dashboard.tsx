@@ -107,6 +107,7 @@ export default function Dashboard() {
 
           <BalanceChart
             bots={bots}
+            botPnls={data?.botPnls ?? []}
             balanceHistory={balanceHistory}
             userBalanceHistory={userBalanceHistory}
             trades={trades}

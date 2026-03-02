@@ -55,8 +55,9 @@ export default function RegisterBoModal({ open, onClose, onCreated }: RegisterBo
         amount: parseFloat(amount),
       };
       if (orderType === 'LIMIT' && limitPrice) body.limit_price = parseFloat(limitPrice);
-      if (tpPrice) body.tp_price = parseFloat(tpPrice);
-      if (slPrice) body.sl_price = parseFloat(slPrice);
+      // TP/SL temporarily disabled — uncomment to re-enable
+      // if (tpPrice) body.tp_price = parseFloat(tpPrice);
+      // if (slPrice) body.sl_price = parseFloat(slPrice);
       if (reason.trim()) body.reason = reason.trim();
       if (ttl) body.ttl = parseInt(ttl);
 
@@ -146,7 +147,7 @@ export default function RegisterBoModal({ open, onClose, onCreated }: RegisterBo
             </div>
           )}
 
-          {/* Bracket: TP / SL */}
+          {/* Bracket: TP / SL — temporarily hidden, uncomment to re-enable
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] text-slate-500 mb-1 flex items-center gap-1.5 uppercase tracking-wide">
@@ -179,6 +180,7 @@ export default function RegisterBoModal({ open, onClose, onCreated }: RegisterBo
               />
             </div>
           </div>
+          */}
 
           {/* Reason + TTL */}
           <div className="grid grid-cols-3 gap-3">

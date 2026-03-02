@@ -119,6 +119,20 @@ export interface UserBalanceHistory {
   recorded_at: string | null;
 }
 
+export interface BotPnl {
+  bot_name: string;
+  initial_balance: number;
+  current_balance: number;
+  realized_pnl: number;
+  realized_pnl_pct: number;
+  wins: number;
+  losses: number;
+  pending: number;
+  total_trades: number;
+  win_rate: number;
+  avg_profit_per_trade: number;
+}
+
 export interface SchedulerStatus {
   running: boolean;
 }

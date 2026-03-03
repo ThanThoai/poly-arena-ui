@@ -1,6 +1,7 @@
 export interface BalanceChartSettings {
   timeframe?: string;
   selectedBots?: string[];
+  chartTab?: 'users' | 'bots';
 }
 
 export interface OrderbookSettings {

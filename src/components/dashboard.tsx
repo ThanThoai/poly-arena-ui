@@ -109,9 +109,9 @@ export default function Dashboard() {
             bots={bots}
             botPnls={data?.botPnls ?? []}
             balanceHistory={balanceHistory}
+            trades={trades}
             userBalanceHistory={userBalanceHistory}
             userPnls={userPnls}
-            trades={trades}
             initialSettings={settings.balanceChart}
             onSettingsChange={(s) => updateSettings({ balanceChart: s })}
           />

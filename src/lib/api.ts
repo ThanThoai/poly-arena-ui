@@ -133,6 +133,16 @@ export interface UserBalanceHistory {
   recorded_at: string | null;
 }
 
+export interface UserBalanceSnapshot {
+  id: number;
+  user_id: number;
+  balance: number;
+  bot_balance: number;
+  available: number;
+  session_id: string | null;
+  recorded_at: string | null;
+}
+
 export interface BotPnl {
   bot_name: string;
   initial_balance: number;

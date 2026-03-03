@@ -14,7 +14,7 @@ import {
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import type { ChartOptions, Plugin } from 'chart.js';
-import { Bot, BotPnl, BalanceHistory, Trade, UserBalanceHistory, UserPnl } from '@/lib/api';
+import { Bot, BotPnl, BalanceHistory, Trade, UserBalanceHistory, UserBalanceSnapshot, UserPnl } from '@/lib/api';
 import { BOT_PALETTE, BALANCE_TF_MS, TF_WINDOW, compact, parseUTC, pnlCls } from '@/lib/helpers';
 import type { BalanceChartSettings } from '@/lib/settings-types';
 
@@ -26,6 +26,7 @@ interface BalanceChartProps {
   balanceHistory: BalanceHistory[];
   trades: Trade[];
   userBalanceHistory: UserBalanceHistory[];
+  userBalanceSnapshots: UserBalanceSnapshot[];
   userPnls: UserPnl[];
   initialSettings?: BalanceChartSettings;
   onSettingsChange?: (s: BalanceChartSettings) => void;
@@ -188,7 +189,7 @@ interface UserAgg {
 }
 
 export default function BalanceChart({
-  bots, botPnls, balanceHistory, trades, userBalanceHistory, userPnls,
+  bots, botPnls, balanceHistory, trades, userBalanceHistory, userBalanceSnapshots, userPnls,
   initialSettings, onSettingsChange,
 }: BalanceChartProps) {
   const [chartTab, setChartTab] = useState<'users' | 'bots'>(initialSettings?.chartTab as any ?? 'users');
@@ -253,11 +254,19 @@ export default function BalanceChart({
       const initBal = user.initial_balance || 0;
 
       const events: { ts: number; balance: number }[] = [];
+      // Merge trade-event balance history
       for (const ubh of userBalanceHistory) {
         if (ubh.user_id !== userId) continue;
         const ts = ubh.recorded_at ? parseUTC(ubh.recorded_at)?.getTime() : null;
         if (!ts) continue;
         events.push({ ts, balance: ubh.balance });
+      }
+      // Merge periodic 5-min snapshots (total equity = bot_balance + available)
+      for (const snap of userBalanceSnapshots) {
+        if (snap.user_id !== userId) continue;
+        const ts = snap.recorded_at ? parseUTC(snap.recorded_at)?.getTime() : null;
+        if (!ts) continue;
+        events.push({ ts, balance: snap.balance });
       }
       events.sort((a, b) => a.ts - b.ts);
 
@@ -308,7 +317,7 @@ export default function BalanceChart({
       };
     }).filter(Boolean) as any[];
     return ds;
-  }, [visibleUsers, users, userBalanceHistory, intervalMs, windowStart, tEnd]);
+  }, [visibleUsers, users, userBalanceHistory, userBalanceSnapshots, intervalMs, windowStart, tEnd]);
 
   // ── Bot ROI datasets ────────────────────────────────────────────────────
   const allBotNames = useMemo(() => botPnls.map((bp) => bp.bot_name).sort(), [botPnls]);

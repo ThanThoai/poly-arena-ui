@@ -73,6 +73,7 @@ export default function Dashboard() {
   const bots = data?.bots ?? [];
   const balanceHistory = data?.balanceHistory ?? [];
   const userBalanceHistory = data?.userBalanceHistory ?? [];
+  const userBalanceSnapshots = data?.userBalanceSnapshots ?? [];
   const userPnls = data?.userPnls ?? [];
   const schedulerStatus = data?.schedulerStatus ?? null;
   const botAchievements = data?.botAchievements ?? {};
@@ -111,6 +112,7 @@ export default function Dashboard() {
             balanceHistory={balanceHistory}
             trades={trades}
             userBalanceHistory={userBalanceHistory}
+            userBalanceSnapshots={userBalanceSnapshots}
             userPnls={userPnls}
             initialSettings={settings.balanceChart}
             onSettingsChange={(s) => updateSettings({ balanceChart: s })}

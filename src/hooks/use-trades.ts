@@ -25,8 +25,8 @@ export function useDashboardData(intervalMs = 30_000) {
   const fetchAll = useCallback(async () => {
     try {
       const [trades, bots, botPnls, balanceHistory, userBalanceHistory, userBalanceSnapshots, userPnls, schedulerStatus, achievementDefs, botAchievements] = await Promise.all([
-        apiFetch<Trade[]>('/binary-options?limit=500'),
-        apiFetch<Bot[]>('/bots'),
+        apiFetch<Trade[]>('/binary-options/?limit=500'),
+        apiFetch<Bot[]>('/bots/'),
         apiFetch<BotPnl[]>('/bots/pnl').catch(() => [] as BotPnl[]),
         apiFetch<BalanceHistory[]>('/bots/balance-history'),
         apiFetch<UserBalanceHistory[]>('/bots/user-balance-history').catch(() => [] as UserBalanceHistory[]),

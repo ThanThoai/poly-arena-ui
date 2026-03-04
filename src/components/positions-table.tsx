@@ -21,6 +21,7 @@ interface PositionsTableProps {
 }
 
 export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, initialSettings, onSettingsChange }: PositionsTableProps) {
+  const [userFilter, setUserFilter] = useState(initialSettings?.userFilter ?? '');
   const [botFilter, setBotFilter] = useState(initialSettings?.botFilter ?? '');
   const [symbolFilter, setSymbolFilter] = useState(initialSettings?.symbolFilter ?? '');
   const [timeframeFilter, setTimeframeFilter] = useState(initialSettings?.tfFilter ?? '');
@@ -33,12 +34,25 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
   const [inspectTrade, setInspectTrade] = useState<Trade | null>(null);
 
   const emitPositionSettings = (patch: Partial<PositionsSettings>) => {
-    onSettingsChange?.({ botFilter, symbolFilter, tfFilter: timeframeFilter, typeFilter, forecastFilter, ...patch });
+    onSettingsChange?.({ userFilter, botFilter, symbolFilter, tfFilter: timeframeFilter, typeFilter, forecastFilter, ...patch });
   };
+
+  // Derive user names + bot→owner mapping from bots
+  const userNames = useMemo(() => {
+    const names = new Set<string>();
+    bots.forEach((b) => { if (b.owner_name) names.add(b.owner_name); });
+    return [...names].sort();
+  }, [bots]);
+  const botOwnerMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    bots.forEach((b) => { if (b.owner_name) m[b.bot_name] = b.owner_name; });
+    return m;
+  }, [bots]);
 
   const pending = useMemo(() => trades.filter((t) => t.result === 'PENDING'), [trades]);
 
   const filtered = useMemo(() => pending.filter((t) => {
+    if (userFilter && botOwnerMap[t.bot_name] !== userFilter) return false;
     if (botFilter && t.bot_name !== botFilter) return false;
     if (symbolFilter && t.symbol !== symbolFilter) return false;
     if (timeframeFilter && t.timeframe !== timeframeFilter) return false;
@@ -58,13 +72,18 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
       : (t.session_offset ?? 0);
     if (dynamicOffset !== activeOffset) return false;
     return true;
-  }), [pending, botFilter, symbolFilter, timeframeFilter, typeFilter, forecastFilter, sessionOffset, tick]);
+  }), [pending, userFilter, botFilter, symbolFilter, timeframeFilter, typeFilter, forecastFilter, sessionOffset, tick, botOwnerMap]);
   const sorted = useMemo(
     () => [...filtered].sort((a, b) => (parseUTC(a.settlement_at)?.getTime() ?? 0) - (parseUTC(b.settlement_at)?.getTime() ?? 0)),
     [filtered],
   );
 
-  const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
+  // Filter bot list by selected user
+  const botNames = useMemo(() => {
+    let list = bots;
+    if (userFilter) list = list.filter((b) => b.owner_name === userFilter);
+    return list.map((b) => b.bot_name).sort();
+  }, [bots, userFilter]);
 
   const PAGE_SIZE = 10;
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
@@ -72,8 +91,8 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
   const start = (safePage - 1) * PAGE_SIZE;
   const paged = sorted.slice(start, start + PAGE_SIZE);
 
-  const hasActiveFilter = botFilter !== '' || symbolFilter !== '' || timeframeFilter !== '' || typeFilter !== '' || forecastFilter !== '';
-  const clearFilters = () => { setBotFilter(''); setSymbolFilter(''); setTimeframeFilter(''); setTypeFilter(''); setForecastFilter(''); setCurrentPage(1); onSettingsChange?.({ botFilter: '', symbolFilter: '', tfFilter: '', typeFilter: '', forecastFilter: '' }); };
+  const hasActiveFilter = userFilter !== '' || botFilter !== '' || symbolFilter !== '' || timeframeFilter !== '' || typeFilter !== '' || forecastFilter !== '';
+  const clearFilters = () => { setUserFilter(''); setBotFilter(''); setSymbolFilter(''); setTimeframeFilter(''); setTypeFilter(''); setForecastFilter(''); setCurrentPage(1); onSettingsChange?.({ userFilter: '', botFilter: '', symbolFilter: '', tfFilter: '', typeFilter: '', forecastFilter: '' }); };
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
@@ -109,6 +128,15 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {userNames.length > 1 && (
+            <CustomSelect
+              placeholder="All Users"
+              options={[{ value: '', label: 'All Users' }, ...userNames.map((n) => ({ value: n, label: n }))]}
+              value={userFilter}
+              onChange={(v) => { setUserFilter(v); setBotFilter(''); emitPositionSettings({ userFilter: v, botFilter: '' }); }}
+              searchable
+            />
+          )}
           <CustomSelect
             placeholder="All Bots"
             options={[{ value: '', label: 'All Bots' }, ...botNames.map((n) => ({ value: n, label: n }))]}
@@ -370,7 +398,12 @@ function PositionRow({
             <BracketBadges trade={t} />
           </div>
         </td>
-        <td className="px-4 py-2.5 text-right text-slate-200">${t.amount.toFixed(2)}</td>
+        <td className="px-4 py-2.5 text-right">
+          <span className="text-slate-200">${t.amount.toFixed(2)}</span>
+          {t.original_amount != null && t.original_amount !== t.amount && (
+            <span className="block text-[9px] text-slate-600">${t.original_amount.toFixed(2)} orig</span>
+          )}
+        </td>
         <td className="px-4 py-2.5 text-right text-slate-500 text-[11px]">
           {t.entry_fee != null && t.entry_fee > 0 ? `$${t.entry_fee.toFixed(2)}` : '\u2014'}
         </td>
@@ -467,6 +500,12 @@ function PositionRow({
                 {t.limit_price != null && (
                   <p className="text-[9px] text-slate-600 mt-0.5">limit @ {fmtCents(t.limit_price)}</p>
                 )}
+                {t.order_type && t.order_type !== 'FAK' && (
+                  <p className="text-[9px] text-rose-400 mt-0.5">{t.order_type} (Fill-Or-Kill)</p>
+                )}
+                {t.ceiling_price != null && (
+                  <p className="text-[9px] text-indigo-400 mt-0.5">ceiling @ {fmtCents(t.ceiling_price)}</p>
+                )}
               </div>
               {/* Avg Price */}
               <div>
@@ -480,6 +519,11 @@ function PositionRow({
                 <p className={`font-mono text-xs font-semibold ${t.num_shares != null ? 'text-sky-300' : 'text-slate-600'}`}>
                   {t.num_shares != null ? Number(t.num_shares).toFixed(4) : '\u2014'}
                 </p>
+                {t.requested_quantity != null && t.filled_quantity != null && t.unfilled_quantity != null && t.unfilled_quantity > 0 && (
+                  <p className="text-[9px] text-amber-500/70 mt-0.5">
+                    {Number(t.filled_quantity).toFixed(2)} / {Number(t.requested_quantity).toFixed(2)} filled
+                  </p>
+                )}
               </div>
               {/* Win Payout */}
               <div>
@@ -489,6 +533,33 @@ function PositionRow({
                 </p>
                 <p className="text-[9px] text-slate-600 mt-0.5">(1 - avg) x shares</p>
               </div>
+              {/* Fill Breakdown — only for partial / queued orders */}
+              {t.original_amount != null && t.me_order_status === 'PARTIAL' && (
+                <div>
+                  <p className="text-[9px] text-slate-600 uppercase tracking-widest mb-0.5">Fill Status</p>
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-1.5 rounded-full overflow-hidden max-w-[80px]" style={{ background: '#1a1a2a' }}>
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            background: '#f59e0b',
+                            width: `${Math.min(100, t.original_amount > 0 ? (t.amount / t.original_amount) * 100 : 0).toFixed(1)}%`
+                          }}
+                        />
+                      </div>
+                      <span className="font-mono text-[10px] font-semibold text-amber-400">
+                        {t.original_amount > 0 ? ((t.amount / t.original_amount) * 100).toFixed(0) : 0}%
+                      </span>
+                    </div>
+                    <p className="text-[9px] text-emerald-400">${t.amount.toFixed(2)} filled</p>
+                    <p className="text-[9px] text-amber-400">${(t.original_amount - t.amount).toFixed(2)} queued to ME</p>
+                    {t.limit_price != null && (
+                      <p className="text-[9px] text-slate-600">waiting at limit {fmtCents(t.limit_price)}</p>
+                    )}
+                  </div>
+                </div>
+              )}
               {/* Bracket TP */}
               <div>
                 <p className="text-[9px] text-slate-600 uppercase tracking-widest mb-0.5">Take Profit</p>

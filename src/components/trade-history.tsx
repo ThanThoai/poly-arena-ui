@@ -23,6 +23,7 @@ interface TradeHistoryProps {
 }
 
 export default function TradeHistory({ trades, bots, isAdmin, initialSettings, onSettingsChange }: TradeHistoryProps) {
+  const [userFilter, setUserFilter] = useState(initialSettings?.userFilter ?? '');
   const [botFilter, setBotFilter] = useState(initialSettings?.botFilter ?? '');
   const [symbolFilter, setSymbolFilter] = useState(initialSettings?.symbolFilter ?? '');
   const [tfFilter, setTfFilter] = useState(initialSettings?.tfFilter ?? '');
@@ -36,15 +37,33 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
   const [inspectTrade, setInspectTrade] = useState<Trade | null>(null);
 
   const emitSettings = (patch: Partial<TradeHistorySettings>) => {
-    onSettingsChange?.({ botFilter, symbolFilter, tfFilter, typeFilter, forecastFilter, resultFilter, open: historyOpen, ...patch });
+    onSettingsChange?.({ userFilter, botFilter, symbolFilter, tfFilter, typeFilter, forecastFilter, resultFilter, open: historyOpen, ...patch });
   };
 
-  const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
+  // Derive user names + bot→owner mapping from bots
+  const userNames = useMemo(() => {
+    const names = new Set<string>();
+    bots.forEach((b) => { if (b.owner_name) names.add(b.owner_name); });
+    return [...names].sort();
+  }, [bots]);
+  const botOwnerMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    bots.forEach((b) => { if (b.owner_name) m[b.bot_name] = b.owner_name; });
+    return m;
+  }, [bots]);
+
+  // Filter bot list by selected user
+  const botNames = useMemo(() => {
+    let list = bots;
+    if (userFilter) list = list.filter((b) => b.owner_name === userFilter);
+    return list.map((b) => b.bot_name).sort();
+  }, [bots, userFilter]);
 
   const filtered = useMemo(() => {
     return trades.filter(
       (t) =>
         t.result !== 'PENDING' &&
+        (!userFilter || botOwnerMap[t.bot_name] === userFilter) &&
         (!botFilter || t.bot_name === botFilter) &&
         (!symbolFilter || t.symbol === symbolFilter) &&
         (!tfFilter || t.timeframe === tfFilter) &&
@@ -52,7 +71,7 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
         (!forecastFilter || t.forecast === forecastFilter) &&
         (!resultFilter || displayResult(t) === resultFilter),
     );
-  }, [trades, botFilter, symbolFilter, tfFilter, typeFilter, forecastFilter, resultFilter]);
+  }, [trades, userFilter, botFilter, symbolFilter, tfFilter, typeFilter, forecastFilter, resultFilter, botOwnerMap]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -60,6 +79,7 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
   const vis = filtered.slice(start, start + PAGE_SIZE);
 
   const clearFilters = () => {
+    setUserFilter('');
     setBotFilter('');
     setSymbolFilter('');
     setTfFilter('');
@@ -67,7 +87,7 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
     setForecastFilter('');
     setResultFilter('');
     setCurrentPage(1);
-    emitSettings({ botFilter: '', symbolFilter: '', tfFilter: '', typeFilter: '', forecastFilter: '', resultFilter: '' });
+    emitSettings({ userFilter: '', botFilter: '', symbolFilter: '', tfFilter: '', typeFilter: '', forecastFilter: '', resultFilter: '' });
   };
 
   const toggleDetail = (id: number) => {
@@ -107,6 +127,15 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
           <h3 className="text-xs font-semibold text-slate-400 group-hover:text-slate-200 uppercase tracking-widest transition-colors">Trade History</h3>
         </button>
         <div className="flex flex-wrap items-center gap-2">
+          {userNames.length > 1 && (
+            <CustomSelect
+              placeholder="All Users"
+              options={[{ value: '', label: 'All Users' }, ...userNames.map((n) => ({ value: n, label: n }))]}
+              value={userFilter}
+              onChange={(v) => { setUserFilter(v); setBotFilter(''); setCurrentPage(1); emitSettings({ userFilter: v, botFilter: '' }); }}
+              searchable
+            />
+          )}
           <CustomSelect
             placeholder="All Bots"
             options={[{ value: '', label: 'All Bots' }, ...botNames.map((n) => ({ value: n, label: n }))]}

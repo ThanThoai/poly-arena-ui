@@ -11,6 +11,7 @@ export interface OrderbookSettings {
 }
 
 export interface PositionsSettings {
+  userFilter?: string;
   botFilter?: string;
   symbolFilter?: string;
   tfFilter?: string;
@@ -19,6 +20,7 @@ export interface PositionsSettings {
 }
 
 export interface TradeHistorySettings {
+  userFilter?: string;
   botFilter?: string;
   symbolFilter?: string;
   tfFilter?: string;

@@ -52,24 +52,14 @@ const TABS: Record<MainTab, TabConfig> = {
           { name: 'timeframe', type: 'string', required: true, note: 'M5 | M15 | H1' },
           { name: 'forecast', type: 'string', required: true, note: 'GREEN (price up) | RED (price down)' },
           { name: 'amount', type: 'number', required: true, note: 'Bet size in USD (> 0)' },
+          { name: 'order_type', type: 'string', required: false, note: 'FAK (default) = fill available, kill rest | FOK = fill all or reject' },
+          { name: 'ceiling_price', type: 'number', required: false, note: '0 < price < 1 — max price willing to pay (market orders only)' },
           { name: 'session_offset', type: 'number', required: false, note: '0 = current candle (default), 1 = next candle (A+1)' },
           { name: 'timestamp', type: 'number', required: false, note: 'Unix timestamp (seconds) — target a specific candle session' },
           { name: 'reason', type: 'string', required: false, note: 'Optional note for your records' },
         ],
         examples: {
-          curl: `# Using session_offset (next candle)
-curl -X POST ${BO_URL}/ \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: YOUR_API_KEY" \\
-  -d '{
-    "symbol":         "BTC",
-    "timeframe":      "M5",
-    "forecast":       "GREEN",
-    "amount":         100,
-    "session_offset": 1
-  }'
-
-# Using timestamp (target specific candle)
+          curl: `# Basic market order
 curl -X POST ${BO_URL}/ \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: YOUR_API_KEY" \\
@@ -77,30 +67,66 @@ curl -X POST ${BO_URL}/ \\
     "symbol":    "BTC",
     "timeframe": "M5",
     "forecast":  "GREEN",
-    "amount":    100,
-    "timestamp": 1772384100
+    "amount":    100
+  }'
+
+# FAK with ceiling_price — fill up to $0.55, cancel remainder
+curl -X POST ${BO_URL}/ \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: YOUR_API_KEY" \\
+  -d '{
+    "symbol":        "BTC",
+    "timeframe":     "M5",
+    "forecast":      "GREEN",
+    "amount":        100,
+    "order_type":    "FAK",
+    "ceiling_price": 0.55
+  }'
+
+# FOK with ceiling_price — fill ALL under $0.60, or reject entirely
+curl -X POST ${BO_URL}/ \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: YOUR_API_KEY" \\
+  -d '{
+    "symbol":        "BTC",
+    "timeframe":     "M5",
+    "forecast":      "GREEN",
+    "amount":        200,
+    "order_type":    "FOK",
+    "ceiling_price": 0.60
   }'`,
-          python: `import time, requests
+          python: `import requests
 
-# Using timestamp — target the candle containing this moment
-ts = int(time.time()) + 300   # e.g. next M5 candle
-
+# FAK market order with ceiling_price
 res = requests.post(
     "${BO_URL}/",
     headers={"x-api-key": "YOUR_API_KEY"},
     json={
-        "symbol":    "BTC",
-        "timeframe": "M5",
-        "forecast":  "GREEN",
-        "amount":    100,
-        "timestamp": ts,   # system resolves candle from this ts
+        "symbol":        "BTC",
+        "timeframe":     "M5",
+        "forecast":      "GREEN",
+        "amount":        100,
+        "order_type":    "FAK",       # fill what's available, cancel rest
+        "ceiling_price": 0.55,        # max price willing to pay
     },
 )
 trade = res.json()
-print(f"Trade #{trade['id']} — settlement: {trade['settlement_at']}")`,
-          js: `// Using timestamp — target the candle containing this moment
-const ts = Math.floor(Date.now() / 1000) + 300; // next M5
+print(f"Trade #{trade['id']} — filled {trade.get('num_shares', 0):.2f} shares")
 
+# FOK market order — all or nothing
+res = requests.post(
+    "${BO_URL}/",
+    headers={"x-api-key": "YOUR_API_KEY"},
+    json={
+        "symbol":        "BTC",
+        "timeframe":     "M5",
+        "forecast":      "GREEN",
+        "amount":        200,
+        "order_type":    "FOK",       # reject if can't fill entirely
+        "ceiling_price": 0.60,
+    },
+)`,
+          js: `// FAK with ceiling_price
 const res = await fetch("${BO_URL}/", {
   method: "POST",
   headers: {
@@ -108,36 +134,46 @@ const res = await fetch("${BO_URL}/", {
     "x-api-key": "YOUR_API_KEY",
   },
   body: JSON.stringify({
-    symbol:    "BTC",
-    timeframe: "M5",
-    forecast:  "GREEN",
-    amount:    100,
-    timestamp: ts,   // system resolves candle from this ts
+    symbol:        "BTC",
+    timeframe:     "M5",
+    forecast:      "GREEN",
+    amount:        100,
+    order_type:    "FAK",     // fill available, kill rest
+    ceiling_price: 0.55,      // max price
   }),
 });
 
 const trade = await res.json();
-console.log(\`Trade #\${trade.id} — settlement: \${trade.settlement_at}\`);`,
+console.log(\`Trade #\${trade.id} — \${trade.num_shares} shares @ \${trade.avg_price}\`);`,
         },
-        responseExample: `// timestamp=1772384100 → falls in candle 14:25–14:30
+        responseExample: `// FAK — filled partially (some asks above ceiling)
 {
   "id": 42,
   "symbol": "BTC",
   "timeframe": "M5",
   "forecast": "GREEN",
-  "amount": 100,
-  "result": "PENDING",
+  "amount": 85.50,
+  "original_amount": 100,
+  "order_type": "FAK",
+  "ceiling_price": 0.55,
   "avg_price": 0.5200,
-  "num_shares": 192.3077,
-  "session_offset": 1,
-  "settlement_at": "2025-06-01T14:30:00Z"
+  "num_shares": 164.42,
+  "result": "PENDING"
 }
 
-// session_offset=0 (default, no timestamp) — current candle
+// FOK — rejected (insufficient liquidity under ceiling)
+{
+  "detail": "FOK order rejected: insufficient liquidity under ceiling price 0.55"
+}
+
+// Market order without ceiling (default FAK, fills all)
 {
   "id": 43,
-  "session_offset": 0,
-  "settlement_at": "2025-06-01T14:25:00Z"
+  "order_type": "FAK",
+  "ceiling_price": null,
+  "avg_price": 0.5200,
+  "num_shares": 192.3077,
+  "result": "PENDING"
 }`,
       },
     ],
@@ -456,7 +492,8 @@ export default function ApiExampleModal({ open, onClose }: ApiExampleModalProps)
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
           </svg>
           All endpoints require <code className="text-slate-400 mx-1">x-api-key</code> header.
-          Set <code className="text-slate-400 mx-1">limit_price</code> for limit orders, omit for market orders.
+          Set <code className="text-slate-400 mx-1">limit_price</code> for limit orders.
+          Use <code className="text-slate-400 mx-1">ceiling_price</code> + <code className="text-slate-400 mx-1">order_type</code> for market price caps.
         </div>
       </div>
     </div>

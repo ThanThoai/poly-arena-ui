@@ -66,6 +66,7 @@ export interface Trade {
   timeframe: string;
   forecast: string;
   amount: number;
+  original_amount: number | null;
   result: string | null;
   profit: number | null;
   price_open: number | null;
@@ -102,6 +103,14 @@ export interface Trade {
   position_closed: boolean | null;
   session_offset: number | null;
   entry_fee: number | null;
+  order_type: string | null;
+  ceiling_price: number | null;
+  session_id: string | null;
+  candle_open: number | null;
+  // Computed fill breakdown
+  requested_quantity: number | null;
+  filled_quantity: number | null;
+  unfilled_quantity: number | null;
 }
 
 export interface Bot {

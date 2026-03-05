@@ -11,7 +11,7 @@ interface CreateBotModalProps {
 
 export default function CreateBotModal({ open, onClose, onCreated }: CreateBotModalProps) {
   const [botName, setBotName] = useState('');
-  const [initialBalance, setInitialBalance] = useState('1000');
+  const initialBalance = '10000';
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -19,7 +19,6 @@ export default function CreateBotModal({ open, onClose, onCreated }: CreateBotMo
 
   const handleClose = () => {
     setBotName('');
-    setInitialBalance('1000');
     setError('');
     onClose();
   };
@@ -35,7 +34,6 @@ export default function CreateBotModal({ open, onClose, onCreated }: CreateBotMo
         body: JSON.stringify({ bot_name: botName.trim(), initial_balance: Number(initialBalance) }),
       });
       setBotName('');
-      setInitialBalance('1000');
       onCreated(data);
     } catch (ex) {
       setError(ex instanceof Error ? ex.message : 'Unknown error');
@@ -74,19 +72,12 @@ export default function CreateBotModal({ open, onClose, onCreated }: CreateBotMo
             <p className="text-[10px] text-slate-600 mt-1.5 pl-1">Letters, numbers and hyphens</p>
           </div>
           <div>
-            <label className="text-[11px] text-slate-500 mb-2 flex items-center gap-1.5 uppercase tracking-widest font-medium">Initial Balance ($)</label>
+            <label className="text-[11px] text-slate-500 mb-2 flex items-center gap-1.5 uppercase tracking-widest font-medium">Initial Balance</label>
             <div className="modal-field-wrap">
               <span className="modal-field-icon">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
               </span>
-              <input
-                type="number"
-                value={initialBalance}
-                onChange={(e) => setInitialBalance(e.target.value)}
-                required
-                min={1}
-                className="modal-field has-icon"
-              />
+              <div className="modal-field has-icon flex items-center text-slate-300 font-medium">$10,000</div>
             </div>
           </div>
           {error && <p className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2">{error}</p>}

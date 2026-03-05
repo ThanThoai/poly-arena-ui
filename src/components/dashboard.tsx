@@ -2,7 +2,6 @@
 
 import { useState, useCallback } from 'react';
 import { useDashboardData } from '@/hooks/use-trades';
-import { useAuth } from '@/contexts/auth-context';
 import { useSettings } from '@/hooks/use-settings';
 import Header from '@/components/header';
 import KpiCards from '@/components/kpi-cards';
@@ -15,16 +14,13 @@ import ApiKeyModal from '@/components/modals/api-key-modal';
 import RenameBotModal from '@/components/modals/rename-bot-modal';
 import RegisterBoModal from '@/components/modals/register-bo-modal';
 import ApiExampleModal from '@/components/modals/api-example-modal';
-import AuthModal from '@/components/modals/auth-modal';
 import TradingViewCharts from '@/components/tradingview-charts';
 import OrderbookDepth from '@/components/orderbook-depth';
 import ReportPage from '@/components/report-page';
 import BotManagerPage from '@/components/bot-manager-page';
-import AdminPage from '@/components/admin-page';
 import Toast from '@/components/ui/toast';
 
 export default function Dashboard() {
-  const { user } = useAuth();
   const { data, loading, refresh } = useDashboardData(30_000);
   const { settings, updateSettings } = useSettings();
   const [showCreateBot, setShowCreateBot] = useState(false);
@@ -33,7 +29,6 @@ export default function Dashboard() {
   const [showRenameBot, setShowRenameBot] = useState(false);
   const [showRegisterBo, setShowRegisterBo] = useState(false);
   const [showApiExample, setShowApiExample] = useState(false);
-  const [showAuth, setShowAuth] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'report' | 'bots' | 'admin'>('dashboard');
   const [botRefreshKey, setBotRefreshKey] = useState(0);
   const [sessionOffset, setSessionOffset] = useState(0);
@@ -56,8 +51,6 @@ export default function Dashboard() {
   };
 
   const handleTabChange = (tab: 'dashboard' | 'report' | 'bots' | 'admin') => {
-    if (tab === 'bots' && !user) return;
-    if (tab === 'admin' && !user?.is_admin) return;
     setActiveTab(tab);
   };
 
@@ -72,9 +65,6 @@ export default function Dashboard() {
   const trades = data?.trades ?? [];
   const bots = data?.bots ?? [];
   const balanceHistory = data?.balanceHistory ?? [];
-  const userBalanceHistory = data?.userBalanceHistory ?? [];
-  const userBalanceSnapshots = data?.userBalanceSnapshots ?? [];
-  const userPnls = data?.userPnls ?? [];
   const schedulerStatus = data?.schedulerStatus ?? null;
   const botAchievements = data?.botAchievements ?? {};
 
@@ -85,18 +75,16 @@ export default function Dashboard() {
         lastUpdated={lastUpdated}
         onRefresh={handleRefresh}
         onApiExample={() => setShowApiExample(true)}
-        onLogin={() => setShowAuth(true)}
+        onCreateBot={() => setShowCreateBot(true)}
         activeTab={activeTab}
         onTabChange={handleTabChange}
         bots={bots}
         trades={trades}
       />
 
-      {activeTab === 'admin' && user?.is_admin ? (
-        <AdminPage />
-      ) : activeTab === 'report' ? (
+      {activeTab === 'report' ? (
         <ReportPage trades={trades} bots={bots} botAchievements={botAchievements} />
-      ) : activeTab === 'bots' && user ? (
+      ) : activeTab === 'bots' ? (
         <BotManagerPage
           onCreateBot={() => setShowCreateBot(true)}
           onRefresh={refresh}
@@ -111,9 +99,6 @@ export default function Dashboard() {
             botPnls={data?.botPnls ?? []}
             balanceHistory={balanceHistory}
             trades={trades}
-            userBalanceHistory={userBalanceHistory}
-            userBalanceSnapshots={userBalanceSnapshots}
-            userPnls={userPnls}
             initialSettings={settings.balanceChart}
             onSettingsChange={(s) => updateSettings({ balanceChart: s })}
           />
@@ -133,7 +118,6 @@ export default function Dashboard() {
           <PositionsTable
             trades={trades}
             bots={bots}
-            isAdmin={user?.is_admin}
             sessionOffset={sessionOffset}
             initialSettings={settings.positions}
             onSettingsChange={(s) => updateSettings({ positions: s })}
@@ -142,7 +126,6 @@ export default function Dashboard() {
           <TradeHistory
             trades={trades}
             bots={bots}
-            isAdmin={user?.is_admin}
             initialSettings={settings.tradeHistory}
             onSettingsChange={(s) => updateSettings({ tradeHistory: s })}
           />
@@ -150,7 +133,6 @@ export default function Dashboard() {
       )}
 
       {/* Modals */}
-      <AuthModal open={showAuth} onClose={() => setShowAuth(false)} />
       <CreateBotModal open={showCreateBot} onClose={() => setShowCreateBot(false)} onCreated={handleBotCreated} />
       <ApiKeyModal open={showApiKey} onClose={() => setShowApiKey(false)} data={apiKeyData} />
       <RenameBotModal open={showRenameBot} onClose={() => setShowRenameBot(false)} bots={bots} onRenamed={() => refresh()} />

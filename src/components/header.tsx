@@ -1,23 +1,21 @@
 'use client';
 
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { SchedulerStatus, Bot, Trade } from '@/lib/api';
-import { useAuth } from '@/contexts/auth-context';
 
 interface HeaderProps {
   schedulerStatus: SchedulerStatus | null;
   lastUpdated: string;
   onRefresh: () => Promise<void>;
   onApiExample: () => void;
-  onLogin: () => void;
+  onCreateBot: () => void;
   activeTab?: 'dashboard' | 'report' | 'bots' | 'admin';
   onTabChange?: (tab: 'dashboard' | 'report' | 'bots' | 'admin') => void;
   bots?: Bot[];
   trades?: Trade[];
 }
 
-export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiExample, onLogin, activeTab = 'dashboard', onTabChange, bots = [], trades = [] }: HeaderProps) {
-  const { user, logout } = useAuth();
+export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiExample, onCreateBot, activeTab = 'dashboard', onTabChange, bots = [], trades = [] }: HeaderProps) {
   const [spinning, setSpinning] = useState(false);
   const [schedLabel, setSchedLabel] = useState('\u2026');
   const nextRunRef = useRef<number | null>(null);
@@ -49,22 +47,10 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
     return () => clearInterval(id);
   }, [schedulerStatus]);
 
-  // Compute user P&L from only the logged-in user's bots
-  const userPnl = useMemo(() => {
-    const myBots = user ? bots.filter((b) => b.user_id === user.id) : [];
-    if (!myBots.length) return { total: 0, pct: 0, totalInitial: 0, totalCurrent: 0 };
-    const totalInitial = myBots.reduce((s, b) => s + b.initial_balance, 0);
-    const totalCurrent = myBots.reduce((s, b) => s + b.balance, 0);
-    const total = totalCurrent - totalInitial;
-    const pct = totalInitial > 0 ? (total / totalInitial) * 100 : 0;
-    return { total, pct, totalInitial, totalCurrent };
-  }, [bots, user]);
-
-  const tabs: Array<{ key: 'dashboard' | 'report' | 'bots' | 'admin'; label: string; authOnly?: boolean; adminOnly?: boolean }> = [
+  const tabs: Array<{ key: 'dashboard' | 'report' | 'bots' | 'admin'; label: string }> = [
     { key: 'dashboard', label: 'Dashboard' },
     { key: 'report', label: 'Report' },
-    { key: 'bots', label: 'Bot Manager', authOnly: true },
-    { key: 'admin', label: 'Admin', adminOnly: true },
+    { key: 'bots', label: 'Bot Manager' },
   ];
 
   return (
@@ -83,9 +69,7 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
 
         {onTabChange && (
           <div className="flex items-center gap-1 ml-2">
-            {tabs
-              .filter((t) => (!t.authOnly || user) && (!t.adminOnly || user?.is_admin))
-              .map((t) => (
+            {tabs.map((t) => (
                 <button
                   key={t.key}
                   onClick={() => onTabChange(t.key)}
@@ -112,29 +96,6 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
 
         <div className="flex-1" />
 
-        {user && (
-          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs" style={{ background: '#0d0d1f', border: '1px solid #1f1f32' }}>
-            <span className="text-slate-400">{user.username}</span>
-            <span className="text-slate-600">|</span>
-            <span className="text-[10px] text-slate-500">Balance</span>
-            <span className="text-emerald-400 font-medium">
-              ${userPnl.totalCurrent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            {userPnl.totalInitial > 0 && (
-              <>
-                <span className="text-slate-600">|</span>
-                <span className="text-[10px] text-slate-500">P&L</span>
-                <span className={`font-semibold ${userPnl.total >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {userPnl.total >= 0 ? '+$' : '-$'}{Math.abs(userPnl.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-                <span className={`text-[10px] font-medium ${userPnl.pct >= 0 ? 'text-emerald-500/70' : 'text-rose-500/70'}`}>
-                  ({userPnl.pct >= 0 ? '+' : ''}{userPnl.pct.toFixed(1)}%)
-                </span>
-              </>
-            )}
-          </div>
-        )}
-
         <span className="text-[11px] text-slate-600 hidden lg:block">{lastUpdated}</span>
 
         <button
@@ -158,28 +119,16 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
           <span className="hidden sm:inline">API</span>
         </button>
 
-        {user ? (
-          <button
-            onClick={logout}
-            className="h-8 px-3 rounded-lg border border-[#252540] text-xs font-medium flex items-center gap-1.5 text-slate-500 hover:border-rose-500/50 hover:text-rose-400 transition-all"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-            <span className="hidden sm:inline">Logout</span>
-          </button>
-        ) : (
-          <button
-            onClick={onLogin}
-            className="h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            style={{ background: 'linear-gradient(135deg,#7c3aed,#4d79ff)' }}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
-            </svg>
-            Login
-          </button>
-        )}
+        <button
+          onClick={onCreateBot}
+          className="h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+          style={{ background: 'linear-gradient(135deg,#7c3aed,#4d79ff)' }}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          Create Bot
+        </button>
       </div>
     </header>
   );

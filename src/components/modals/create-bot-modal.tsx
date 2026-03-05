@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { apiFetch } from '@/lib/api';
-import { useAuth } from '@/contexts/auth-context';
 
 interface CreateBotModalProps {
   open: boolean;
@@ -11,7 +10,6 @@ interface CreateBotModalProps {
 }
 
 export default function CreateBotModal({ open, onClose, onCreated }: CreateBotModalProps) {
-  const { user, refreshUser } = useAuth();
   const [botName, setBotName] = useState('');
   const [initialBalance, setInitialBalance] = useState('1000');
   const [error, setError] = useState('');
@@ -19,11 +17,9 @@ export default function CreateBotModal({ open, onClose, onCreated }: CreateBotMo
 
   if (!open) return null;
 
-  const available = user?.available_balance ?? 0;
-
   const handleClose = () => {
     setBotName('');
-    setInitialBalance(String(Math.min(1000, available)));
+    setInitialBalance('1000');
     setError('');
     onClose();
   };
@@ -33,14 +29,13 @@ export default function CreateBotModal({ open, onClose, onCreated }: CreateBotMo
     setSubmitting(true);
     setError('');
     try {
-      const data = await apiFetch<{ bot_name: string; api_key: string; balance: number }>('/bots/', {
+      const data = await apiFetch<{ bot_name: string; api_key: string; balance: number }>('/bots', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bot_name: botName.trim(), initial_balance: Number(initialBalance) }),
       });
       setBotName('');
       setInitialBalance('1000');
-      await refreshUser();
       onCreated(data);
     } catch (ex) {
       setError(ex instanceof Error ? ex.message : 'Unknown error');
@@ -64,9 +59,6 @@ export default function CreateBotModal({ open, onClose, onCreated }: CreateBotMo
           </div>
           <h3 className="relative font-bold text-base text-slate-100">New Bot</h3>
           <div className="relative flex items-center justify-center gap-2 mt-3">
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium" style={{ background: '#052016', color: '#34d399', border: '1px solid rgba(52,211,153,.2)' }}>
-              Available: ${available.toLocaleString()}
-            </span>
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium" style={{ background: '#0d0d2a', color: '#a78bfa', border: '1px solid rgba(167,139,250,.2)' }}>API Key</span>
           </div>
         </div>
@@ -96,7 +88,6 @@ export default function CreateBotModal({ open, onClose, onCreated }: CreateBotMo
                 className="modal-field has-icon"
               />
             </div>
-            <p className="text-[10px] text-slate-600 mt-1.5 pl-1">Max: ${available.toLocaleString()}</p>
           </div>
           {error && <p className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2">{error}</p>}
           <div className="flex gap-2.5 pt-1">

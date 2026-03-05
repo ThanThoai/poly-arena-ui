@@ -61,7 +61,7 @@ export default function RegisterBoModal({ open, onClose, onCreated }: RegisterBo
       if (reason.trim()) body.reason = reason.trim();
       if (ttl) body.ttl = parseInt(ttl);
 
-      await apiFetch('/binary-options/', {
+      await apiFetch('/binary-options', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey.trim() },
         body: JSON.stringify(body),

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -14,7 +14,7 @@ import {
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import type { ChartOptions, Plugin } from 'chart.js';
-import { Bot, BotPnl, BalanceHistory, Trade, UserBalanceHistory, UserBalanceSnapshot, UserPnl } from '@/lib/api';
+import { Bot, BotPnl, BalanceHistory, Trade } from '@/lib/api';
 import { BOT_PALETTE, BALANCE_TF_MS, TF_WINDOW, compact, parseUTC, pnlCls } from '@/lib/helpers';
 import type { BalanceChartSettings } from '@/lib/settings-types';
 
@@ -25,9 +25,6 @@ interface BalanceChartProps {
   botPnls: BotPnl[];
   balanceHistory: BalanceHistory[];
   trades: Trade[];
-  userBalanceHistory: UserBalanceHistory[];
-  userBalanceSnapshots: UserBalanceSnapshot[];
-  userPnls: UserPnl[];
   initialSettings?: BalanceChartSettings;
   onSettingsChange?: (s: BalanceChartSettings) => void;
 }
@@ -178,25 +175,17 @@ const crosshairPlugin: Plugin<'line'> = {
   },
 };
 
-/* ── Aggregate user balance from per-user balance history ── */
-interface UserAgg {
-  user_id: number;
-  username: string;
-  initial_balance: number;
-  current_balance: number;
-  realized_pnl: number;
-  realized_pnl_pct: number;
-}
-
 export default function BalanceChart({
-  bots, botPnls, balanceHistory, trades, userBalanceHistory, userBalanceSnapshots, userPnls,
+  bots, botPnls, balanceHistory, trades,
   initialSettings, onSettingsChange,
 }: BalanceChartProps) {
-  const [chartTab, setChartTab] = useState<'users' | 'bots'>(initialSettings?.chartTab as any ?? 'users');
+  const [chartTab, setChartTab] = useState<'roi' | 'balance'>(
+    (initialSettings?.chartTab === 'roi' || initialSettings?.chartTab === 'balance')
+      ? initialSettings.chartTab
+      : 'balance'
+  );
   const [balanceTf, setBalanceTf] = useState(initialSettings?.timeframe ?? 'M5');
   const [botFilter, setBotFilter] = useState<Set<string>>(new Set());
-  const [userFilter, setUserFilter] = useState<Set<number>>(new Set());
-  const [selectedUsers, setSelectedUsers] = useState<Set<number>>(new Set());
 
   const botPnlMap = useMemo(() => {
     const m = new Map<string, BotPnl>();
@@ -209,7 +198,7 @@ export default function BalanceChart({
     onSettingsChange?.({ timeframe: tf, selectedBots: [], chartTab });
   };
 
-  const handleTabChange = (tab: 'users' | 'bots') => {
+  const handleTabChange = (tab: 'roi' | 'balance') => {
     setChartTab(tab);
     onSettingsChange?.({ timeframe: balanceTf, selectedBots: [], chartTab: tab });
   };
@@ -218,108 +207,7 @@ export default function BalanceChart({
   const tEnd = Date.now();
   const windowStart = tEnd - (TF_WINDOW[balanceTf] ?? TF_WINDOW.H1);
 
-  // ── Users: aggregate from userPnls ──────────────────────────────────────
-  const users: UserAgg[] = useMemo(() =>
-    userPnls.map((up) => ({
-      user_id: up.user_id,
-      username: up.username,
-      initial_balance: up.initial_balance,
-      current_balance: up.current_balance,
-      realized_pnl: up.realized_pnl,
-      realized_pnl_pct: up.realized_pnl_pct,
-    })),
-  [userPnls]);
-
-  const allUserIds = useMemo(() => users.map((u) => u.user_id), [users]);
-  const visibleUsers = userFilter.size > 0 ? allUserIds.filter((id) => userFilter.has(id)) : allUserIds;
-
-  const handleUserChipClick = (userId: number) => {
-    const nf = new Set(userFilter);
-    if (nf.has(userId)) nf.delete(userId); else nf.add(userId);
-    setUserFilter(nf.size === 0 ? new Set() : nf);
-  };
-
-  const handleUserDetailClick = (userId: number) => {
-    const ns = new Set(selectedUsers);
-    if (ns.has(userId)) ns.delete(userId); else ns.add(userId);
-    setSelectedUsers(ns);
-  };
-
-  // ── User balance timeline datasets ──────────────────────────────────────
-  const userBalanceTimeline = useMemo(() => {
-    const ds = visibleUsers.map((userId, idx) => {
-      const user = users.find((u) => u.user_id === userId);
-      if (!user) return null;
-      const color = BOT_PALETTE[idx % BOT_PALETTE.length];
-      const initBal = user.initial_balance || 0;
-
-      const events: { ts: number; balance: number }[] = [];
-      // Merge trade-event balance history
-      for (const ubh of userBalanceHistory) {
-        if (ubh.user_id !== userId) continue;
-        const ts = ubh.recorded_at ? parseUTC(ubh.recorded_at)?.getTime() : null;
-        if (!ts) continue;
-        events.push({ ts, balance: ubh.balance });
-      }
-      // Merge periodic 5-min snapshots (total equity = bot_balance + available)
-      for (const snap of userBalanceSnapshots) {
-        if (snap.user_id !== userId) continue;
-        const ts = snap.recorded_at ? parseUTC(snap.recorded_at)?.getTime() : null;
-        if (!ts) continue;
-        events.push({ ts, balance: snap.balance });
-      }
-      events.sort((a, b) => a.ts - b.ts);
-
-      let lastBefore = initBal;
-      let startIdx = 0;
-      for (let i = 0; i < events.length; i++) {
-        if (events[i].ts < windowStart) { lastBefore = events[i].balance; startIdx = i + 1; }
-        else break;
-      }
-
-      const tStart = Math.floor(windowStart / intervalMs) * intervalMs;
-      const data: { x: number; y: number }[] = [];
-      let histIdx = startIdx;
-
-      for (let t = tStart; t <= tEnd; t += intervalMs) {
-        while (histIdx < events.length && events[histIdx].ts <= t) {
-          lastBefore = events[histIdx].balance;
-          histIdx++;
-        }
-        data.push({ x: t, y: +lastBefore.toFixed(2) });
-      }
-      while (histIdx < events.length) { lastBefore = events[histIdx].balance; histIdx++; }
-      if (data.length && data[data.length - 1].x < tEnd) {
-        data.push({ x: tEnd, y: +lastBefore.toFixed(2) });
-      }
-      if (!data.length) {
-        const tStart2 = Math.floor(windowStart / intervalMs) * intervalMs;
-        data.push({ x: tStart2, y: initBal });
-        data.push({ x: tEnd, y: initBal });
-      }
-
-      const lastIdx = data.length - 1;
-      return {
-        label: user.username,
-        data,
-        borderColor: color,
-        backgroundColor: color + '33',
-        borderWidth: 1.5,
-        tension: 0.3,
-        fill: false,
-        initBalance: initBal,
-        realizedPnl: user.realized_pnl,
-        pointRadius: data.map((_: any, i: number) => (i === 0 || i === lastIdx) ? 5 : 0),
-        pointHoverRadius: 7,
-        pointBackgroundColor: color,
-        pointBorderColor: '#07070d',
-        pointBorderWidth: 1.5,
-      };
-    }).filter(Boolean) as any[];
-    return ds;
-  }, [visibleUsers, users, userBalanceHistory, userBalanceSnapshots, intervalMs, windowStart, tEnd]);
-
-  // ── Bot ROI datasets ────────────────────────────────────────────────────
+  // ── Bot filter ────────────────────────────────────────────────────────
   const allBotNames = useMemo(() => botPnls.map((bp) => bp.bot_name).sort(), [botPnls]);
   const visibleBots = botFilter.size > 0 ? allBotNames.filter((b) => botFilter.has(b)) : allBotNames;
 
@@ -329,12 +217,14 @@ export default function BalanceChart({
     setBotFilter(nf.size === 0 ? new Set() : nf);
   };
 
-  const botRoiDatasets = useMemo(() => {
-    const ds = visibleBots.map((botName, idx) => {
-      const color = BOT_PALETTE[idx % BOT_PALETTE.length];
+  // ── Shared binning logic ──────────────────────────────────────────────
+  const botBinnedData = useMemo(() => {
+    const result = new Map<string, { data: { x: number; y: number }[]; initBal: number; lastBalance: number }>();
+
+    for (const botName of visibleBots) {
       const bot = bots.find((b) => b.bot_name === botName);
       const initBal = bot?.initial_balance ?? 0;
-      if (!initBal) return null;
+      if (!initBal) continue;
 
       const events: { ts: number; balance: number }[] = [];
       for (const bh of balanceHistory) {
@@ -361,19 +251,33 @@ export default function BalanceChart({
           lastBefore = events[histIdx].balance;
           histIdx++;
         }
-        data.push({ x: t, y: +((lastBefore - initBal) / initBal * 100).toFixed(2) });
+        data.push({ x: t, y: lastBefore });
       }
       while (histIdx < events.length) { lastBefore = events[histIdx].balance; histIdx++; }
       if (data.length && data[data.length - 1].x < tEnd) {
-        data.push({ x: tEnd, y: +((lastBefore - initBal) / initBal * 100).toFixed(2) });
+        data.push({ x: tEnd, y: lastBefore });
       }
       if (!data.length) {
         const tStart2 = Math.floor(windowStart / intervalMs) * intervalMs;
-        data.push({ x: tStart2, y: 0 });
-        data.push({ x: tEnd, y: 0 });
+        data.push({ x: tStart2, y: initBal });
+        data.push({ x: tEnd, y: initBal });
       }
 
+      result.set(botName, { data, initBal, lastBalance: lastBefore });
+    }
+    return result;
+  }, [visibleBots, bots, balanceHistory, intervalMs, windowStart, tEnd]);
+
+  // ── Bot ROI datasets ──────────────────────────────────────────────────
+  const botRoiDatasets = useMemo(() => {
+    const ds = visibleBots.map((botName, idx) => {
+      const binned = botBinnedData.get(botName);
+      if (!binned) return null;
+      const { data: rawData, initBal } = binned;
+      const color = BOT_PALETTE[idx % BOT_PALETTE.length];
       const bp = botPnlMap.get(botName);
+
+      const data = rawData.map((pt) => ({ x: pt.x, y: +((pt.y - initBal) / initBal * 100).toFixed(2) }));
       const lastIdx = data.length - 1;
       return {
         label: botName,
@@ -410,11 +314,42 @@ export default function BalanceChart({
       });
     }
     return ds;
-  }, [visibleBots, bots, balanceHistory, botPnlMap, intervalMs, windowStart, tEnd]);
+  }, [visibleBots, botBinnedData, botPnlMap, tEnd]);
 
-  // ── Active datasets based on tab ────────────────────────────────────────
-  const isRoiMode = chartTab === 'bots';
-  const activeDatasets = isRoiMode ? botRoiDatasets : userBalanceTimeline;
+  // ── Bot Balance datasets ──────────────────────────────────────────────
+  const botBalanceDatasets = useMemo(() => {
+    const ds = visibleBots.map((botName, idx) => {
+      const binned = botBinnedData.get(botName);
+      if (!binned) return null;
+      const { data: rawData, initBal } = binned;
+      const color = BOT_PALETTE[idx % BOT_PALETTE.length];
+      const bp = botPnlMap.get(botName);
+
+      const data = rawData.map((pt) => ({ x: pt.x, y: +pt.y.toFixed(2) }));
+      const lastIdx = data.length - 1;
+      return {
+        label: botName,
+        data,
+        borderColor: color,
+        backgroundColor: color + '33',
+        borderWidth: 1.5,
+        tension: 0.3,
+        fill: false,
+        initBalance: initBal,
+        realizedPnl: bp?.realized_pnl ?? 0,
+        pointRadius: data.map((_: any, i: number) => (i === 0 || i === lastIdx) ? 5 : 0),
+        pointHoverRadius: 7,
+        pointBackgroundColor: color,
+        pointBorderColor: '#07070d',
+        pointBorderWidth: 1.5,
+      };
+    }).filter(Boolean) as any[];
+    return ds;
+  }, [visibleBots, botBinnedData, botPnlMap]);
+
+  // ── Active datasets based on tab ──────────────────────────────────────
+  const isRoiMode = chartTab === 'roi';
+  const activeDatasets = isRoiMode ? botRoiDatasets : botBalanceDatasets;
 
   const yBounds = useMemo(() => {
     let yMin = Infinity;
@@ -500,7 +435,7 @@ export default function BalanceChart({
     },
   };
 
-  /* ── Summary stats (bot-level, shown in bots tab) ── */
+  /* ── Summary stats ── */
   const summaryStats = useMemo(() => {
     const visible = visibleBots
       .map((name) => botPnlMap.get(name))
@@ -519,7 +454,6 @@ export default function BalanceChart({
   }, [visibleBots, botPnlMap]);
 
   const allBotSel = botFilter.size === 0;
-  const allUserSel = userFilter.size === 0;
 
   const chartPlugins = useMemo(() => {
     const roiSetter: Plugin<'line'> = {
@@ -537,16 +471,16 @@ export default function BalanceChart({
           <div className="flex items-center gap-2">
             {/* Tab switcher */}
             <button
-              className={`text-xs font-semibold uppercase tracking-widest px-2 py-0.5 rounded ${chartTab === 'users' ? 'text-slate-200 bg-slate-700/50' : 'text-slate-500 hover:text-slate-400'}`}
-              onClick={() => handleTabChange('users')}
+              className={`text-xs font-semibold uppercase tracking-widest px-2 py-0.5 rounded ${chartTab === 'roi' ? 'text-slate-200 bg-slate-700/50' : 'text-slate-500 hover:text-slate-400'}`}
+              onClick={() => handleTabChange('roi')}
             >
-              Users
+              ROI %
             </button>
             <button
-              className={`text-xs font-semibold uppercase tracking-widest px-2 py-0.5 rounded ${chartTab === 'bots' ? 'text-slate-200 bg-slate-700/50' : 'text-slate-500 hover:text-slate-400'}`}
-              onClick={() => handleTabChange('bots')}
+              className={`text-xs font-semibold uppercase tracking-widest px-2 py-0.5 rounded ${chartTab === 'balance' ? 'text-slate-200 bg-slate-700/50' : 'text-slate-500 hover:text-slate-400'}`}
+              onClick={() => handleTabChange('balance')}
             >
-              Bots ROI %
+              Balance
             </button>
             <span className="w-px h-4 bg-slate-700 mx-1" />
             {(['M5', 'M15', 'H1'] as const).map((tf) => (
@@ -561,146 +495,52 @@ export default function BalanceChart({
           </div>
         </div>
 
-        {/* ── Users tab: user chips + detail rows ── */}
-        {chartTab === 'users' && (
-          <>
-            <div className="flex flex-wrap gap-1.5 min-h-[22px]">
+        {/* Bot filter chips */}
+        <div className="flex flex-wrap gap-1.5 min-h-[22px]">
+          <button
+            className="pnl-chip"
+            style={{
+              borderColor: allBotSel ? '#4d79ff' : '#1f1f32',
+              color: allBotSel ? '#7b9fff' : '#475569',
+              background: allBotSel ? 'rgba(77,121,255,.15)' : 'transparent',
+            }}
+            onClick={() => setBotFilter(new Set())}
+          >
+            All
+          </button>
+          {allBotNames.map((bn, i) => {
+            const c = BOT_PALETTE[i % BOT_PALETTE.length];
+            const on = allBotSel || botFilter.has(bn);
+            const bp = botPnlMap.get(bn);
+            const roi = bp?.realized_pnl_pct ?? 0;
+            const wr = bp ? (bp.wins + bp.losses > 0 ? Math.round(bp.win_rate) : null) : null;
+            const rSign = roi >= 0 ? '+' : '';
+            return (
               <button
+                key={bn}
                 className="pnl-chip"
                 style={{
-                  borderColor: allUserSel ? '#4d79ff' : '#1f1f32',
-                  color: allUserSel ? '#7b9fff' : '#475569',
-                  background: allUserSel ? 'rgba(77,121,255,.15)' : 'transparent',
+                  borderColor: on ? c : '#1f1f32',
+                  color: on ? c : '#475569',
+                  background: botFilter.has(bn) ? c + '33' : on ? c + '22' : 'transparent',
                 }}
-                onClick={() => { setUserFilter(new Set()); setSelectedUsers(new Set()); }}
+                onClick={() => handleBotClick(bn)}
               >
-                All
+                <span>{bn}</span>
+                <span className={`ml-1 text-[9px] ${roi >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
+                  {rSign}{roi.toFixed(1)}%
+                </span>
+                {wr !== null && (
+                  <span className="ml-1 text-[9px] text-slate-500">{wr}%W</span>
+                )}
               </button>
-              {users.map((u, i) => {
-                const c = BOT_PALETTE[i % BOT_PALETTE.length];
-                const on = allUserSel || userFilter.has(u.user_id);
-                const detail = selectedUsers.has(u.user_id);
-                const roi = u.realized_pnl_pct;
-                const rSign = roi >= 0 ? '+' : '';
-                return (
-                  <button
-                    key={u.user_id}
-                    className="pnl-chip"
-                    style={{
-                      borderColor: on ? c : '#1f1f32',
-                      color: on ? c : '#475569',
-                      background: detail ? c + '44' : userFilter.has(u.user_id) ? c + '33' : on ? c + '22' : 'transparent',
-                    }}
-                    onClick={(e) => {
-                      if (e.shiftKey || e.metaKey || e.ctrlKey) {
-                        handleUserDetailClick(u.user_id);
-                      } else {
-                        handleUserChipClick(u.user_id);
-                        handleUserDetailClick(u.user_id);
-                      }
-                    }}
-                  >
-                    <span>{u.username}</span>
-                    <span className={`ml-1 text-[9px] ${roi >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
-                      {rSign}{roi.toFixed(1)}%
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Detail rows right below chips */}
-            {selectedUsers.size > 0 && (
-              <div className="mt-2 space-y-1.5">
-                {userPnls
-                  .filter((up) => selectedUsers.has(up.user_id))
-                  .map((up) => (
-                    <div key={up.user_id} className="card-sm px-3 py-2">
-                      <div className="flex items-center gap-3 text-[11px] flex-wrap">
-                        <span className="text-slate-200 font-semibold min-w-[60px]">{up.username}</span>
-                        <span className={`font-semibold ${pnlCls(up.realized_pnl)}`}>
-                          {up.realized_pnl >= 0 ? '+' : ''}${compact(Math.abs(up.realized_pnl))}
-                          {' '}({up.realized_pnl_pct >= 0 ? '+' : ''}{up.realized_pnl_pct.toFixed(1)}%)
-                        </span>
-                        <span className="text-slate-600">|</span>
-                        <span><span className="text-slate-500">Bal</span> <span className="text-slate-300">${compact(up.current_balance)}</span></span>
-                        <span><span className="text-slate-500">Init</span> <span className="text-slate-300">${compact(up.initial_balance)}</span></span>
-                        <span><span className="text-slate-500">Alloc</span> <span className="text-slate-300">${compact(up.allocated_balance)}</span></span>
-                        <span><span className="text-slate-500">Avail</span> <span className="text-slate-300">${compact(up.available_balance)}</span></span>
-                        <span className="text-slate-600">|</span>
-                        <span>
-                          <span className="text-emerald-400">{up.wins}</span>
-                          <span className="text-slate-600">/</span>
-                          <span className="text-rose-400">{up.losses}</span>
-                          {up.pending > 0 && <span className="text-slate-500 ml-0.5">({up.pending}p)</span>}
-                        </span>
-                        {up.total_fees > 0 && (
-                          <span><span className="text-slate-500">Fees</span> <span className="text-slate-400">${compact(up.total_fees)}</span></span>
-                        )}
-                        <span>
-                          <span className="text-slate-500">Avg</span>
-                          <span className={`ml-0.5 ${pnlCls(up.avg_profit_per_trade)}`}>
-                            {up.total_trades > 0
-                              ? `${up.avg_profit_per_trade >= 0 ? '+' : ''}$${Math.abs(up.avg_profit_per_trade).toFixed(2)}`
-                              : '—'}
-                          </span>
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* ── Bots tab: bot chips ── */}
-        {chartTab === 'bots' && (
-          <div className="flex flex-wrap gap-1.5 min-h-[22px]">
-            <button
-              className="pnl-chip"
-              style={{
-                borderColor: allBotSel ? '#4d79ff' : '#1f1f32',
-                color: allBotSel ? '#7b9fff' : '#475569',
-                background: allBotSel ? 'rgba(77,121,255,.15)' : 'transparent',
-              }}
-              onClick={() => setBotFilter(new Set())}
-            >
-              All
-            </button>
-            {allBotNames.map((bn, i) => {
-              const c = BOT_PALETTE[i % BOT_PALETTE.length];
-              const on = allBotSel || botFilter.has(bn);
-              const bp = botPnlMap.get(bn);
-              const roi = bp?.realized_pnl_pct ?? 0;
-              const wr = bp ? (bp.wins + bp.losses > 0 ? Math.round(bp.win_rate) : null) : null;
-              const rSign = roi >= 0 ? '+' : '';
-              return (
-                <button
-                  key={bn}
-                  className="pnl-chip"
-                  style={{
-                    borderColor: on ? c : '#1f1f32',
-                    color: on ? c : '#475569',
-                    background: botFilter.has(bn) ? c + '33' : on ? c + '22' : 'transparent',
-                  }}
-                  onClick={() => handleBotClick(bn)}
-                >
-                  <span>{bn}</span>
-                  <span className={`ml-1 text-[9px] ${roi >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
-                    {rSign}{roi.toFixed(1)}%
-                  </span>
-                  {wr !== null && (
-                    <span className="ml-1 text-[9px] text-slate-500">{wr}%W</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        )}
+            );
+          })}
+        </div>
       </div>
 
-      {/* Summary stats row (bots tab) */}
-      {chartTab === 'bots' && summaryStats && (
+      {/* Summary stats row */}
+      {summaryStats && (
         <div className="flex flex-wrap gap-3 mb-3">
           <div className="card-sm px-3 py-1.5 text-[11px]">
             <span className="text-slate-500">Total Balance</span>

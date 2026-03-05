@@ -61,7 +61,7 @@ const TABS: Record<MainTab, TabConfig> = {
         ],
         examples: {
           curl: `# Basic market order
-curl -X POST ${BO_URL}/ \\
+curl -X POST ${BO_URL} \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: YOUR_API_KEY" \\
   -d '{
@@ -72,7 +72,7 @@ curl -X POST ${BO_URL}/ \\
   }'
 
 # FAK with ceiling_price
-curl -X POST ${BO_URL}/ \\
+curl -X POST ${BO_URL} \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: YOUR_API_KEY" \\
   -d '{
@@ -85,7 +85,7 @@ curl -X POST ${BO_URL}/ \\
   }'
 
 # FOK with ceiling_price
-curl -X POST ${BO_URL}/ \\
+curl -X POST ${BO_URL} \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: YOUR_API_KEY" \\
   -d '{
@@ -100,7 +100,7 @@ curl -X POST ${BO_URL}/ \\
 
 # FAK market order with ceiling_price
 res = requests.post(
-    "${BO_URL}/",
+    "${BO_URL}",
     headers={"x-api-key": "YOUR_API_KEY"},
     json={
         "symbol":        "BTC",
@@ -116,7 +116,7 @@ print(f"Trade #{trade['id']}")
 
 # FOK market order
 res = requests.post(
-    "${BO_URL}/",
+    "${BO_URL}",
     headers={"x-api-key": "YOUR_API_KEY"},
     json={
         "symbol":        "BTC",
@@ -128,7 +128,7 @@ res = requests.post(
     },
 )`,
           js: `// FAK with ceiling_price
-const res = await fetch("${BO_URL}/", {
+const res = await fetch("${BO_URL}", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -202,7 +202,7 @@ console.log(\`Trade #\${trade.id} — \${trade.num_shares} shares @ \${trade.avg
           { name: 'timestamp', type: 'number', required: false, note: 'Unix ts — target a specific candle session' },
         ],
         examples: {
-          curl: `curl -X POST ${BO_URL}/ \\
+          curl: `curl -X POST ${BO_URL} \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: YOUR_API_KEY" \\
   -d '{
@@ -214,7 +214,7 @@ console.log(\`Trade #\${trade.id} — \${trade.num_shares} shares @ \${trade.avg
     "ttl":         120
   }'`,
           python: `res = requests.post(
-    "${BO_URL}/",
+    "${BO_URL}",
     headers={"x-api-key": "YOUR_API_KEY"},
     json={
         "symbol":      "BTC",
@@ -227,7 +227,7 @@ console.log(\`Trade #\${trade.id} — \${trade.num_shares} shares @ \${trade.avg
 )
 trade = res.json()
 print(f"Limit #{trade['id']} — status: {trade['me_order_status']}")`,
-          js: `const res = await fetch("${BO_URL}/", {
+          js: `const res = await fetch("${BO_URL}", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",

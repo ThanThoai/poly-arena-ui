@@ -278,3 +278,22 @@ export interface OrderbookEntry {
   asks: OrderbookLevel[];
   updated_at: string | null;
 }
+
+export interface VolumeBar {
+  minute: number;
+  up_amount: number;
+  down_amount: number;
+  up_trades: number;
+  down_trades: number;
+}
+
+export async function fetchSessionVolume(
+  symbol: string,
+  timeframe: string,
+  session: number,
+): Promise<VolumeBar[]> {
+  const res = await apiFetch<{ volume: VolumeBar[] }>(
+    `/binary-options/volume?symbol=${symbol}&timeframe=${timeframe}&session=${session}`,
+  );
+  return res.volume;
+}

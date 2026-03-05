@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { SchedulerStatus, Bot, Trade } from '@/lib/api';
 
+export type MarketType = 'prediction' | 'future';
+
 interface HeaderProps {
   schedulerStatus: SchedulerStatus | null;
   lastUpdated: string;
@@ -11,11 +13,13 @@ interface HeaderProps {
   onCreateBot: () => void;
   activeTab?: 'dashboard' | 'report' | 'bots' | 'admin';
   onTabChange?: (tab: 'dashboard' | 'report' | 'bots' | 'admin') => void;
+  activeMarket?: MarketType;
+  onMarketChange?: (market: MarketType) => void;
   bots?: Bot[];
   trades?: Trade[];
 }
 
-export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiExample, onCreateBot, activeTab = 'dashboard', onTabChange, bots = [], trades = [] }: HeaderProps) {
+export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiExample, onCreateBot, activeTab = 'dashboard', onTabChange, activeMarket = 'prediction', onMarketChange, bots = [], trades = [] }: HeaderProps) {
   const [spinning, setSpinning] = useState(false);
   const [schedLabel, setSchedLabel] = useState('\u2026');
   const nextRunRef = useRef<number | null>(null);
@@ -64,11 +68,31 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
             P
           </div>
           <span className="font-bold tracking-tight text-sm">PolyArena</span>
-          <span className="text-slate-600 text-xs hidden sm:block">&middot; BO Dashboard</span>
         </div>
 
-        {onTabChange && (
-          <div className="flex items-center gap-1 ml-2">
+        {onMarketChange && (
+          <div className="flex items-center gap-0.5 ml-2 p-0.5 rounded-lg bg-[#0d0d1a] border border-[#1a1a2e]">
+            {([
+              { key: 'prediction' as MarketType, label: 'Prediction Market' },
+              { key: 'future' as MarketType, label: 'Future Market' },
+            ]).map((m) => (
+              <button
+                key={m.key}
+                onClick={() => onMarketChange(m.key)}
+                className={`h-7 px-3 rounded-md text-[11px] font-semibold transition-all ${
+                  activeMarket === m.key
+                    ? 'bg-gradient-to-r from-[#4d79ff] to-[#a855f7] text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {activeMarket === 'prediction' && onTabChange && (
+          <div className="flex items-center gap-1 ml-1">
             {tabs.map((t) => (
                 <button
                   key={t.key}

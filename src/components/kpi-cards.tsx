@@ -3,111 +3,33 @@
 import { useMemo } from 'react';
 import { Trade, Bot } from '@/lib/api';
 
-interface BotStats {
-  bot_name: string;
-  totalProfit: number;
-  totalAmount: number;
-  wins: number;
-  losses: number;
-  trades: number;
-  roi: number;
-  balance: number;
-  initialBalance: number;
-}
-
 interface KpiCardsProps {
   trades: Trade[];
   bots: Bot[];
 }
 
-function computeBotStats(trades: Trade[], bots: Bot[]): BotStats[] {
-  const map = new Map<string, BotStats>();
-
-  for (const b of bots) {
-    map.set(b.bot_name, {
-      bot_name: b.bot_name,
-      totalProfit: 0,
-      totalAmount: 0,
-      wins: 0,
-      losses: 0,
-      trades: 0,
-      roi: 0,
-      balance: b.balance,
-      initialBalance: b.initial_balance,
-    });
-  }
-
-  for (const t of trades) {
-    if (t.result !== 'WIN' && t.result !== 'LOSS') continue;
-    let s = map.get(t.bot_name);
-    if (!s) {
-      s = {
-        bot_name: t.bot_name,
-        totalProfit: 0,
-        totalAmount: 0,
-        wins: 0,
-        losses: 0,
-        trades: 0,
-        roi: 0,
-        balance: 0,
-        initialBalance: 0,
-      };
-      map.set(t.bot_name, s);
-    }
-    s.totalProfit += t.profit ?? 0;
-    s.totalAmount += t.amount;
-    s.trades += 1;
-    if (t.result === 'WIN') s.wins += 1;
-    else s.losses += 1;
-  }
-
-  const result: BotStats[] = [];
-  for (const s of map.values()) {
-    s.roi = s.totalAmount > 0 ? (s.totalProfit / s.totalAmount) * 100 : 0;
-    if (s.trades > 0) result.push(s);
-  }
-  return result;
-}
-
-interface UserStats {
-  name: string;
-  totalProfit: number;
-  totalAmount: number;
-  wins: number;
-  losses: number;
+interface SessionStat {
+  bot_name: string;
+  session_id: string;
+  profit: number;
   trades: number;
-  roi: number;
 }
 
-function computeUserStats(trades: Trade[], bots: Bot[]): UserStats[] {
-  const botOwner = new Map<string, string>();
-  for (const b of bots) {
-    if (b.owner_name) botOwner.set(b.bot_name, b.owner_name);
-  }
-
-  const map = new Map<string, UserStats>();
+function computeSessionStats(trades: Trade[]): SessionStat[] {
+  const map = new Map<string, SessionStat>();
   for (const t of trades) {
     if (t.result !== 'WIN' && t.result !== 'LOSS') continue;
-    const owner = botOwner.get(t.bot_name);
-    if (!owner) continue;
-    let s = map.get(owner);
+    if (!t.session_id) continue;
+    const key = `${t.bot_name}::${t.session_id}`;
+    let s = map.get(key);
     if (!s) {
-      s = { name: owner, totalProfit: 0, totalAmount: 0, wins: 0, losses: 0, trades: 0, roi: 0 };
-      map.set(owner, s);
+      s = { bot_name: t.bot_name, session_id: t.session_id, profit: 0, trades: 0 };
+      map.set(key, s);
     }
-    s.totalProfit += t.profit ?? 0;
-    s.totalAmount += t.amount;
+    s.profit += t.profit ?? 0;
     s.trades += 1;
-    if (t.result === 'WIN') s.wins += 1;
-    else s.losses += 1;
   }
-
-  const result: UserStats[] = [];
-  for (const s of map.values()) {
-    s.roi = s.totalAmount > 0 ? (s.totalProfit / s.totalAmount) * 100 : 0;
-    if (s.trades > 0) result.push(s);
-  }
-  return result;
+  return [...map.values()];
 }
 
 interface CardDef {
@@ -122,37 +44,45 @@ interface CardDef {
 }
 
 export default function KpiCards({ trades, bots }: KpiCardsProps) {
-  const botStats = useMemo(() => computeBotStats(trades, bots), [trades, bots]);
-  const userStats = useMemo(() => computeUserStats(trades, bots), [trades, bots]);
+  const sessionStats = useMemo(() => computeSessionStats(trades), [trades]);
 
   const cards = useMemo<CardDef[]>(() => {
-    const fmt = (v: number) => (v < 0 ? '-$' : '+$') + Math.abs(v).toFixed(2);
+    const fmtBal = (v: number) => '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    const fmtProfit = (v: number) => (v < 0 ? '-$' : '+$') + Math.abs(v).toFixed(2);
     const fmtPct = (v: number) => (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
     const result: CardDef[] = [];
 
-    if (botStats.length > 0) {
-      const byProfit = [...botStats].sort((a, b) => b.totalProfit - a.totalProfit);
-      const byLoss = [...botStats].sort((a, b) => a.totalProfit - b.totalProfit);
-      const topWin = byProfit[0];
-      const topLoss = byLoss[0];
+    // Filter bots that have at least 1 settled trade
+    const activeBots = bots.filter((b) =>
+      trades.some((t) => t.bot_name === b.bot_name && (t.result === 'WIN' || t.result === 'LOSS'))
+    );
+
+    if (activeBots.length > 0) {
+      const byBalance = [...activeBots].sort((a, b) => b.balance - a.balance);
+      const topWin = byBalance[0];
+      const topLoss = byBalance[byBalance.length - 1];
+      const topWinRoi = topWin.initial_balance > 0
+        ? ((topWin.balance - topWin.initial_balance) / topWin.initial_balance) * 100 : 0;
+      const topLossRoi = topLoss.initial_balance > 0
+        ? ((topLoss.balance - topLoss.initial_balance) / topLoss.initial_balance) * 100 : 0;
 
       result.push(
         {
-          label: 'Bot Top Win',
-          icon: '\uD83E\uDD16',
+          label: 'Top Balance',
+          icon: '\uD83E\uDD47',
           name: topWin.bot_name,
-          value: fmt(topWin.totalProfit),
-          sub: `ROI ${fmtPct(topWin.roi)} · ${topWin.wins}W/${topWin.losses}L`,
+          value: fmtBal(topWin.balance),
+          sub: `Init ${fmtBal(topWin.initial_balance)} · ROI ${fmtPct(topWinRoi)}`,
           color: '#34d399',
           bg: '#0a1a14',
           border: '#0d3d2a',
         },
         {
-          label: 'Bot Top Loss',
-          icon: '\uD83E\uDD16',
+          label: 'Lowest Balance',
+          icon: '\uD83E\uDD48',
           name: topLoss.bot_name,
-          value: fmt(topLoss.totalProfit),
-          sub: `ROI ${fmtPct(topLoss.roi)} · ${topLoss.wins}W/${topLoss.losses}L`,
+          value: fmtBal(topLoss.balance),
+          sub: `Init ${fmtBal(topLoss.initial_balance)} · ROI ${fmtPct(topLossRoi)}`,
           color: '#f87171',
           bg: '#1a0a0a',
           border: '#3d0d0d',
@@ -160,29 +90,28 @@ export default function KpiCards({ trades, bots }: KpiCardsProps) {
       );
     }
 
-    if (userStats.length > 0) {
-      const byProfit = [...userStats].sort((a, b) => b.totalProfit - a.totalProfit);
-      const byLoss = [...userStats].sort((a, b) => a.totalProfit - b.totalProfit);
-      const topWin = byProfit[0];
-      const topLoss = byLoss[0];
+    if (sessionStats.length > 0) {
+      const byProfit = [...sessionStats].sort((a, b) => b.profit - a.profit);
+      const best = byProfit[0];
+      const worst = byProfit[byProfit.length - 1];
 
       result.push(
         {
-          label: 'User Top Win',
-          icon: '\uD83D\uDC64',
-          name: topWin.name,
-          value: fmt(topWin.totalProfit),
-          sub: `ROI ${fmtPct(topWin.roi)} · ${topWin.wins}W/${topWin.losses}L`,
+          label: 'Best Session',
+          icon: '\uD83D\uDD25',
+          name: best.bot_name,
+          value: fmtProfit(best.profit),
+          sub: `${best.trades} trade${best.trades > 1 ? 's' : ''} · ${best.session_id}`,
           color: '#38bdf8',
           bg: '#0a141a',
           border: '#0d2a3d',
         },
         {
-          label: 'User Top Loss',
-          icon: '\uD83D\uDC64',
-          name: topLoss.name,
-          value: fmt(topLoss.totalProfit),
-          sub: `ROI ${fmtPct(topLoss.roi)} · ${topLoss.wins}W/${topLoss.losses}L`,
+          label: 'Worst Session',
+          icon: '\u2744\uFE0F',
+          name: worst.bot_name,
+          value: fmtProfit(worst.profit),
+          sub: `${worst.trades} trade${worst.trades > 1 ? 's' : ''} · ${worst.session_id}`,
           color: '#fb923c',
           bg: '#1a1208',
           border: '#3d280a',
@@ -191,7 +120,7 @@ export default function KpiCards({ trades, bots }: KpiCardsProps) {
     }
 
     return result;
-  }, [botStats, userStats]);
+  }, [bots, trades, sessionStats]);
 
   if (cards.length === 0) {
     return (

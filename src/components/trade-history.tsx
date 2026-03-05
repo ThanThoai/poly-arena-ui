@@ -114,6 +114,14 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
   const from = filtered.length ? start + 1 : 0;
   const to = Math.min(start + PAGE_SIZE, filtered.length);
 
+  const filteredStats = useMemo(() => {
+    const wins = filtered.filter((t) => t.result === 'WIN').length;
+    const losses = filtered.filter((t) => t.result === 'LOSS').length;
+    const totalProfit = filtered.reduce((s, t) => s + (t.profit ?? 0), 0);
+    const totalAmount = filtered.reduce((s, t) => s + t.amount, 0);
+    return { wins, losses, totalProfit, totalAmount };
+  }, [filtered]);
+
   return (
     <div className="card overflow-hidden">
       {/* Filter row */}
@@ -125,6 +133,13 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
             </svg>
           </span>
           <h3 className="text-xs font-semibold text-slate-400 group-hover:text-slate-200 uppercase tracking-widest transition-colors">Trade History</h3>
+          {filtered.length > 0 && (
+            <span className="text-[11px] text-slate-500 ml-1">
+              P&L <span className={`font-semibold ${pnlCls(filteredStats.totalProfit)}`}>{money(filteredStats.totalProfit)}</span>
+              <span className="text-slate-600 ml-1.5">{filteredStats.wins}W / {filteredStats.losses}L</span>
+              <span className="text-slate-600 ml-1.5">Vol {money(filteredStats.totalAmount)}</span>
+            </span>
+          )}
         </button>
         <div className="flex flex-wrap items-center gap-2">
           {userNames.length > 1 && (
@@ -280,11 +295,13 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
             </table>
           </div>
 
-          {/* Pagination */}
+          {/* Pagination + summary */}
           <div className="px-5 py-2.5 border-t border-[#1a1a2a] flex items-center justify-between gap-3 flex-wrap">
-            <span className="text-[11px] text-slate-600">
-              {filtered.length ? `${from}\u2013${to} of ${filtered.length} trade${filtered.length !== 1 ? 's' : ''}` : '0 trades'}
-            </span>
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-[11px] text-slate-600">
+                {filtered.length ? `${from}\u2013${to} of ${filtered.length} trade${filtered.length !== 1 ? 's' : ''}` : '0 trades'}
+              </span>
+            </div>
             <Pagination currentPage={safePage} totalPages={totalPages} onPageChange={setCurrentPage} />
           </div>
         </div>

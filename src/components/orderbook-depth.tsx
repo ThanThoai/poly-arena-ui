@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { usePolymarketOrderbook } from '@/hooks/use-polymarket-ws';
-import { OrderbookLevel } from '@/lib/api';
+import { OrderbookLevel, VolumeBar, fetchSessionVolume } from '@/lib/api';
 import SymbolBadge from '@/components/ui/symbol-badge';
 import type { OrderbookSettings } from '@/lib/settings-types';
 
@@ -28,6 +28,14 @@ function currentCandleOpen(tf: string): number {
   return now - (now % period);
 }
 
+/** Format minute timestamp as HH:MM */
+function formatMinute(ts: number): string {
+  const d = new Date(ts * 1000);
+  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+}
+
+type ViewTab = 'depth' | 'volume';
+
 interface OrderbookDepthProps {
   initialSettings?: OrderbookSettings;
   onSettingsChange?: (s: OrderbookSettings) => void;
@@ -38,6 +46,7 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange, onSe
   const [selectedSymbol, setSelectedSymbol] = useState(initialSettings?.symbol ?? 'BTC');
   const [selectedTf, setSelectedTf] = useState(initialSettings?.timeframe ?? 'M5');
   const [open, setOpen] = useState(initialSettings?.open ?? true);
+  const [viewTab, setViewTab] = useState<ViewTab>('depth');
 
   // Tick that bumps at every candle boundary so session labels auto-update
   const [candleEpoch, setCandleEpoch] = useState(() => currentCandleOpen(selectedTf));
@@ -90,7 +99,7 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange, onSe
     }
   }, [sessionTabs, selectedSession, candleEpoch, onSessionChange]);
 
-  // Emit session offset: future sessions → 1, current/past → 0
+  // Emit session offset: future sessions -> 1, current/past -> 0
   const handleSessionSelect = (s: number) => {
     setSelectedSession(s);
     const isFuture = s > candleEpoch;
@@ -192,56 +201,270 @@ export default function OrderbookDepth({ initialSettings, onSettingsChange, onSe
         </div>
       </div>
 
-      {/* Session tabs — all numeric timestamps: 1 past + current + 2 future */}
+      {/* Session tabs + View tabs row */}
       {open && (
-        <div className="px-5 py-2 border-b border-[#1a1a2a] flex items-center gap-1 overflow-x-auto">
-          <span className="text-[9px] text-slate-600 uppercase tracking-wide mr-1 shrink-0">Session</span>
-          {sessionTabs.map((s) => {
-            const isCurrent = s === candleEpoch;
-            const label = formatSessionTime(s);
-            const isActive = s === selectedSession;
-            return (
-              <button
-                key={s}
-                onClick={() => handleSessionSelect(s)}
-                className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors whitespace-nowrap flex items-center gap-1 ${
-                  isCurrent
-                    ? isActive
-                      ? 'bg-red-500/20 text-red-400 border border-red-500/40'
-                      : 'text-red-400/70 hover:text-red-300 border border-red-500/20'
-                    : isActive
-                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                      : 'text-slate-500 hover:text-slate-300 border border-transparent'
-                }`}
-              >
-                {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-red-500 live-dot shrink-0" />}
-                {label}
-              </button>
-            );
-          })}
+        <div className="px-5 py-2 border-b border-[#1a1a2a] flex items-center justify-between gap-2 overflow-x-auto">
+          {/* Session tabs */}
+          <div className="flex items-center gap-1">
+            <span className="text-[9px] text-slate-600 uppercase tracking-wide mr-1 shrink-0">Session</span>
+            {sessionTabs.map((s) => {
+              const isCurrent = s === candleEpoch;
+              const label = formatSessionTime(s);
+              const isActive = s === selectedSession;
+              return (
+                <button
+                  key={s}
+                  onClick={() => handleSessionSelect(s)}
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors whitespace-nowrap flex items-center gap-1 ${
+                    isCurrent
+                      ? isActive
+                        ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                        : 'text-red-400/70 hover:text-red-300 border border-red-500/20'
+                      : isActive
+                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                        : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                  }`}
+                >
+                  {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-red-500 live-dot shrink-0" />}
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* View tabs: Depth / Volume */}
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => setViewTab('depth')}
+              className={`px-2.5 py-0.5 rounded-md text-[10px] font-semibold transition-colors ${
+                viewTab === 'depth'
+                  ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                  : 'text-slate-500 hover:text-slate-300 border border-transparent'
+              }`}
+            >
+              Depth
+            </button>
+            <button
+              onClick={() => setViewTab('volume')}
+              className={`px-2.5 py-0.5 rounded-md text-[10px] font-semibold transition-colors ${
+                viewTab === 'volume'
+                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                  : 'text-slate-500 hover:text-slate-300 border border-transparent'
+              }`}
+            >
+              Volume
+            </button>
+          </div>
         </div>
       )}
 
       {/* Body */}
       <div className={`collapsible ${open ? '' : 'collapsed'}`}>
         <div className="collapsible-inner">
-          {!hasData ? (
-            <div className="px-5 py-8 text-center text-slate-600 text-xs">
-              {connected
-                ? `No orderbook data for ${selectedSymbol} ${selectedTf}`
-                : 'Connecting to orderbook feed...'}
-            </div>
+          {viewTab === 'depth' ? (
+            // Depth view
+            !hasData ? (
+              <div className="px-5 py-8 text-center text-slate-600 text-xs">
+                {connected
+                  ? `No orderbook data for ${selectedSymbol} ${selectedTf}`
+                  : 'Connecting to orderbook feed...'}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-[#1a1a2a]">
+                <DirectionBook label="UP" book={bookUp} symbol={selectedSymbol} tf={selectedTf} />
+                <DirectionBook label="DOWN" book={bookDown} symbol={selectedSymbol} tf={selectedTf} />
+              </div>
+            )
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-[#1a1a2a]">
-              <DirectionBook label="UP" book={bookUp} symbol={selectedSymbol} tf={selectedTf} />
-              <DirectionBook label="DOWN" book={bookDown} symbol={selectedSymbol} tf={selectedTf} />
-            </div>
+            // Volume view
+            <VolumeView
+              symbol={selectedSymbol}
+              timeframe={selectedTf}
+              session={selectedSession}
+              candleEpoch={candleEpoch}
+            />
           )}
         </div>
       </div>
     </div>
   );
 }
+
+// ── Volume View ──────────────────────────────────────────────────────────────
+
+function VolumeView({
+  symbol,
+  timeframe,
+  session,
+  candleEpoch,
+}: {
+  symbol: string;
+  timeframe: string;
+  session: number;
+  candleEpoch: number;
+}) {
+  const [bars, setBars] = useState<VolumeBar[]>([]);
+  const [loading, setLoading] = useState(true);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchVolume = useCallback(async () => {
+    try {
+      const data = await fetchSessionVolume(symbol, timeframe, session);
+      setBars(data);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  }, [symbol, timeframe, session]);
+
+  useEffect(() => {
+    setLoading(true);
+    setBars([]);
+    fetchVolume();
+
+    // Poll every 5 seconds for live sessions
+    intervalRef.current = setInterval(fetchVolume, 5000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [fetchVolume]);
+
+  // Generate all minute slots for the session
+  const period = TF_SECONDS[timeframe] ?? 300;
+  const totalMinutes = Math.floor(period / 60);
+
+  const minuteSlots = useMemo(() => {
+    const slots: number[] = [];
+    for (let i = 0; i < totalMinutes; i++) {
+      slots.push(session + i * 60);
+    }
+    return slots;
+  }, [session, totalMinutes]);
+
+  // Map bars by minute for quick lookup
+  const barMap = useMemo(() => {
+    const m = new Map<number, VolumeBar>();
+    for (const b of bars) m.set(b.minute, b);
+    return m;
+  }, [bars]);
+
+  // Compute max volume for bar scaling
+  const maxAmount = useMemo(() => {
+    let max = 0;
+    for (const slot of minuteSlots) {
+      const b = barMap.get(slot);
+      if (b) {
+        max = Math.max(max, b.up_amount, b.down_amount);
+      }
+    }
+    return max || 1;
+  }, [minuteSlots, barMap]);
+
+  // Total stats
+  const totals = useMemo(() => {
+    let upAmt = 0, downAmt = 0, upTrades = 0, downTrades = 0;
+    for (const b of bars) {
+      upAmt += b.up_amount;
+      downAmt += b.down_amount;
+      upTrades += b.up_trades;
+      downTrades += b.down_trades;
+    }
+    return { upAmt, downAmt, upTrades, downTrades, total: upAmt + downAmt, totalTrades: upTrades + downTrades };
+  }, [bars]);
+
+  const isCurrent = session === candleEpoch;
+
+  if (loading) {
+    return (
+      <div className="px-5 py-8 text-center text-slate-600 text-xs">
+        Loading volume data...
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 py-3">
+      {/* Volume summary */}
+      <div className="flex items-center gap-4 mb-3 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-slate-500 uppercase tracking-wide">Total Vol</span>
+          <span className="text-[11px] font-mono font-semibold text-slate-300">
+            ${totals.total.toFixed(2)}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-sm bg-emerald-500/60" />
+          <span className="text-[10px] text-emerald-400 font-mono">${totals.upAmt.toFixed(2)}</span>
+          <span className="text-[9px] text-slate-600">({totals.upTrades})</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-sm bg-rose-500/60" />
+          <span className="text-[10px] text-rose-400 font-mono">${totals.downAmt.toFixed(2)}</span>
+          <span className="text-[9px] text-slate-600">({totals.downTrades})</span>
+        </div>
+        {isCurrent && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500 live-dot" />
+            Live
+          </span>
+        )}
+      </div>
+
+      {/* Bar chart */}
+      {totals.total === 0 ? (
+        <div className="py-6 text-center text-slate-600 text-[11px]">
+          No trades in this session yet
+        </div>
+      ) : (
+        <div className="flex items-end gap-[3px]" style={{ height: 120 }}>
+          {minuteSlots.map((slot) => {
+            const b = barMap.get(slot);
+            const upAmt = b?.up_amount ?? 0;
+            const downAmt = b?.down_amount ?? 0;
+            const upPct = maxAmount > 0 ? (upAmt / maxAmount) * 100 : 0;
+            const downPct = maxAmount > 0 ? (downAmt / maxAmount) * 100 : 0;
+            const upTrades = b?.up_trades ?? 0;
+            const downTrades = b?.down_trades ?? 0;
+            const label = formatMinute(slot);
+            const now = Math.floor(Date.now() / 1000);
+            const isCurrentMinute = now >= slot && now < slot + 60;
+
+            return (
+              <div
+                key={slot}
+                className="flex-1 flex flex-col items-center gap-0 h-full group relative"
+                title={`${label}\nUP: $${upAmt.toFixed(2)} (${upTrades})\nDOWN: $${downAmt.toFixed(2)} (${downTrades})`}
+              >
+                {/* Bars container — bottom-aligned */}
+                <div className="flex-1 w-full flex items-end justify-center gap-[1px]">
+                  {/* UP bar */}
+                  <div
+                    className="w-[45%] rounded-t-sm bg-emerald-500/50 transition-all duration-300 min-h-[1px]"
+                    style={{ height: `${Math.max(upPct > 0 ? 2 : 0, upPct)}%` }}
+                  />
+                  {/* DOWN bar */}
+                  <div
+                    className="w-[45%] rounded-t-sm bg-rose-500/50 transition-all duration-300 min-h-[1px]"
+                    style={{ height: `${Math.max(downPct > 0 ? 2 : 0, downPct)}%` }}
+                  />
+                </div>
+                {/* Time label */}
+                <span className={`text-[8px] font-mono mt-1 ${
+                  isCurrentMinute ? 'text-red-400' : 'text-slate-600'
+                }`}>
+                  {label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Direction Book (Depth view) ──────────────────────────────────────────────
 
 function DirectionBook({
   label,

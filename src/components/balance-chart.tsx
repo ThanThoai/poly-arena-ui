@@ -36,7 +36,6 @@ const endLabelPlugin: Plugin<'line'> = {
   afterDatasetsDraw(chart) {
     const { ctx } = chart;
     const LINE_H = 28;
-    const roiMode = (chart as any)._roiMode;
 
     const labels: { x: number; y: number; label: string; val: string; pct: string; pctColor: string; color: string }[] = [];
     chart.data.datasets.forEach((ds, i) => {
@@ -49,32 +48,20 @@ const endLabelPlugin: Plugin<'line'> = {
       const raw = ds.data[ds.data.length - 1] as { y: number };
       const val = raw?.y ?? 0;
 
-      if (roiMode) {
-        const sign = val >= 0 ? '+' : '';
-        labels.push({
-          x: last.x + 8, y: last.y,
-          label: ds.label || '',
-          val: `${sign}${val.toFixed(2)}%`,
-          pct: '',
-          pctColor: val >= 0 ? '#34d399' : '#fb7185',
-          color: ds.borderColor as string,
-        });
-      } else {
-        const init = (ds as any).initBalance || 0;
-        const realPnl = (ds as any).realizedPnl;
-        const pctVal = realPnl !== undefined && init > 0
-          ? (realPnl / init) * 100
-          : init > 0 ? ((val - init) / init) * 100 : 0;
-        const pctSign = pctVal >= 0 ? '+' : '';
-        labels.push({
-          x: last.x + 8, y: last.y,
-          label: ds.label || '',
-          val: '$' + Number(val).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
-          pct: `${pctSign}${pctVal.toFixed(1)}%`,
-          pctColor: pctVal >= 0 ? '#34d399' : '#fb7185',
-          color: ds.borderColor as string,
-        });
-      }
+      const init = (ds as any).initBalance || 0;
+      const realPnl = (ds as any).realizedPnl;
+      const pctVal = realPnl !== undefined && init > 0
+        ? (realPnl / init) * 100
+        : init > 0 ? ((val - init) / init) * 100 : 0;
+      const pctSign = pctVal >= 0 ? '+' : '';
+      labels.push({
+        x: last.x + 8, y: last.y,
+        label: ds.label || '',
+        val: '$' + Number(val).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
+        pct: `${pctSign}${pctVal.toFixed(1)}%`,
+        pctColor: pctVal >= 0 ? '#34d399' : '#fb7185',
+        color: ds.borderColor as string,
+      });
     });
 
     labels.sort((a, b) => a.y - b.y);
@@ -95,7 +82,7 @@ const endLabelPlugin: Plugin<'line'> = {
       ctx.font = '10px sans-serif';
       ctx.fillText(l.label, l.x, l.y - 7);
       ctx.font = 'bold 10px sans-serif';
-      ctx.fillStyle = roiMode ? l.pctColor : l.color;
+      ctx.fillStyle = l.color;
       ctx.fillText(l.val, l.x, l.y + 5);
       if (l.pct) {
         const valWidth = ctx.measureText(l.val).width;
@@ -179,11 +166,6 @@ export default function BalanceChart({
   bots, botPnls, balanceHistory, trades,
   initialSettings, onSettingsChange,
 }: BalanceChartProps) {
-  const [chartTab, setChartTab] = useState<'roi' | 'balance'>(
-    (initialSettings?.chartTab === 'roi' || initialSettings?.chartTab === 'balance')
-      ? initialSettings.chartTab
-      : 'balance'
-  );
   const [balanceTf, setBalanceTf] = useState(initialSettings?.timeframe ?? 'M5');
   const [botFilter, setBotFilter] = useState<Set<string>>(new Set());
 
@@ -195,12 +177,7 @@ export default function BalanceChart({
 
   const handleTfChange = (tf: string) => {
     setBalanceTf(tf);
-    onSettingsChange?.({ timeframe: tf, selectedBots: [], chartTab });
-  };
-
-  const handleTabChange = (tab: 'roi' | 'balance') => {
-    setChartTab(tab);
-    onSettingsChange?.({ timeframe: balanceTf, selectedBots: [], chartTab: tab });
+    onSettingsChange?.({ timeframe: tf, selectedBots: [] });
   };
 
   const intervalMs = BALANCE_TF_MS[balanceTf] ?? BALANCE_TF_MS.H1;
@@ -268,54 +245,6 @@ export default function BalanceChart({
     return result;
   }, [visibleBots, bots, balanceHistory, intervalMs, windowStart, tEnd]);
 
-  // ── Bot ROI datasets ──────────────────────────────────────────────────
-  const botRoiDatasets = useMemo(() => {
-    const ds = visibleBots.map((botName, idx) => {
-      const binned = botBinnedData.get(botName);
-      if (!binned) return null;
-      const { data: rawData, initBal } = binned;
-      const color = BOT_PALETTE[idx % BOT_PALETTE.length];
-      const bp = botPnlMap.get(botName);
-
-      const data = rawData.map((pt) => ({ x: pt.x, y: +((pt.y - initBal) / initBal * 100).toFixed(2) }));
-      const lastIdx = data.length - 1;
-      return {
-        label: botName,
-        data,
-        borderColor: color,
-        backgroundColor: color + '33',
-        borderWidth: 1.5,
-        tension: 0.3,
-        fill: false,
-        initBalance: initBal,
-        realizedPnl: bp?.realized_pnl ?? 0,
-        pointRadius: data.map((_: any, i: number) => (i === 0 || i === lastIdx) ? 5 : 0),
-        pointHoverRadius: 7,
-        pointBackgroundColor: color,
-        pointBorderColor: '#07070d',
-        pointBorderWidth: 1.5,
-      };
-    }).filter(Boolean) as any[];
-
-    // 0% baseline
-    const xMin = ds.reduce((m: number, d: any) => (d.data.length ? Math.min(m, d.data[0].x) : m), Infinity);
-    if (xMin !== Infinity) {
-      ds.push({
-        label: 'Baseline (0%)',
-        data: [{ x: xMin, y: 0 }, { x: tEnd, y: 0 }],
-        borderColor: '#475569',
-        backgroundColor: 'transparent',
-        borderWidth: 1,
-        borderDash: [5, 5],
-        pointRadius: 0,
-        tension: 0.3,
-        fill: false,
-        order: 10,
-      });
-    }
-    return ds;
-  }, [visibleBots, botBinnedData, botPnlMap, tEnd]);
-
   // ── Bot Balance datasets ──────────────────────────────────────────────
   const botBalanceDatasets = useMemo(() => {
     const ds = visibleBots.map((botName, idx) => {
@@ -347,9 +276,7 @@ export default function BalanceChart({
     return ds;
   }, [visibleBots, botBinnedData, botPnlMap]);
 
-  // ── Active datasets based on tab ──────────────────────────────────────
-  const isRoiMode = chartTab === 'roi';
-  const activeDatasets = isRoiMode ? botRoiDatasets : botBalanceDatasets;
+  const activeDatasets = botBalanceDatasets;
 
   const yBounds = useMemo(() => {
     let yMin = Infinity;
@@ -393,10 +320,6 @@ export default function BalanceChart({
           label: (c) => {
             const ds = activeDatasets[c.datasetIndex] as any;
             const val = c.parsed.y ?? 0;
-            if (isRoiMode) {
-              const sign = val >= 0 ? '+' : '';
-              return ` ${c.dataset.label}: ${sign}${val.toFixed(2)}%`;
-            }
             const init = ds?.initBalance;
             const realPnl = ds?.realizedPnl;
             const formatted = '$' + Number(val).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -425,7 +348,7 @@ export default function BalanceChart({
         max: yBounds?.max,
         grid: { color: '#1e2235' },
         ticks: {
-          callback: (v) => isRoiMode ? `${v as number >= 0 ? '+' : ''}${(v as number).toFixed(1)}%` : '$' + compact(v as number),
+          callback: (v) => '$' + compact(v as number),
           font: { size: 10 },
           maxTicksLimit: 6,
           padding: 4,
@@ -456,32 +379,15 @@ export default function BalanceChart({
   const allBotSel = botFilter.size === 0;
 
   const chartPlugins = useMemo(() => {
-    const roiSetter: Plugin<'line'> = {
-      id: 'roiSetter',
-      beforeInit(chart) { (chart as any)._roiMode = isRoiMode; },
-      beforeUpdate(chart) { (chart as any)._roiMode = isRoiMode; },
-    };
-    return [roiSetter, gradientFillPlugin, crosshairPlugin, endLabelPlugin];
-  }, [isRoiMode]);
+    return [gradientFillPlugin, crosshairPlugin, endLabelPlugin];
+  }, []);
 
   return (
     <div className="card p-5">
       <div className="mb-3">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            {/* Tab switcher */}
-            <button
-              className={`text-xs font-semibold uppercase tracking-widest px-2 py-0.5 rounded ${chartTab === 'roi' ? 'text-slate-200 bg-slate-700/50' : 'text-slate-500 hover:text-slate-400'}`}
-              onClick={() => handleTabChange('roi')}
-            >
-              ROI %
-            </button>
-            <button
-              className={`text-xs font-semibold uppercase tracking-widest px-2 py-0.5 rounded ${chartTab === 'balance' ? 'text-slate-200 bg-slate-700/50' : 'text-slate-500 hover:text-slate-400'}`}
-              onClick={() => handleTabChange('balance')}
-            >
-              Balance
-            </button>
+            <span className="text-xs font-semibold uppercase tracking-widest text-slate-200">Balance</span>
             <span className="w-px h-4 bg-slate-700 mx-1" />
             {(['M5', 'M15', 'H1'] as const).map((tf) => (
               <button

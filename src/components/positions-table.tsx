@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { Trade, Bot } from '@/lib/api';
-import { BOT_PALETTE, parseUTC, dtMs, dtShort, dtParts, fmtDiff, fmtCents, TF_PERIOD_MS } from '@/lib/helpers';
+import { BOT_PALETTE, parseUTC, dtMs, dtShort, dtParts, fmtDiff, fmtCents, TF_PERIOD_MS, money } from '@/lib/helpers';
 import SymbolBadge from '@/components/ui/symbol-badge';
 import { OrderTypeBadge, BracketBadges, OrderStatusBadge } from '@/components/ui/order-badges';
 import CustomSelect from '@/components/ui/custom-select';
@@ -85,6 +85,12 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
     return list.map((b) => b.bot_name).sort();
   }, [bots, userFilter]);
 
+  const filteredStats = useMemo(() => {
+    const totalAmount = sorted.reduce((s, t) => s + t.amount, 0);
+    const totalFees = sorted.reduce((s, t) => s + (t.entry_fee ?? 0), 0);
+    return { totalAmount, totalFees, count: sorted.length };
+  }, [sorted]);
+
   const PAGE_SIZE = 10;
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -124,6 +130,14 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
           {sessionOffset === 1 && (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/20">
               A+1
+            </span>
+          )}
+          {filteredStats.count > 0 && (
+            <span className="text-[11px] text-slate-500 ml-1">
+              Locked <span className="font-semibold text-amber-400">{money(filteredStats.totalAmount)}</span>
+              {filteredStats.totalFees > 0 && (
+                <span className="text-slate-600 ml-1.5">Fees {money(filteredStats.totalFees)}</span>
+              )}
             </span>
           )}
         </div>
@@ -278,11 +292,13 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
         </table>
       </div>
 
-      {/* Pagination */}
+      {/* Pagination + summary */}
       <div className="px-5 py-2.5 border-t border-[#1a1a2a] flex items-center justify-between gap-3 flex-wrap">
-        <span className="text-[11px] text-slate-600">
-          {sorted.length ? `${start + 1}\u2013${Math.min(start + PAGE_SIZE, sorted.length)} of ${sorted.length} position${sorted.length !== 1 ? 's' : ''}` : '0 positions'}
-        </span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-[11px] text-slate-600">
+            {sorted.length ? `${start + 1}\u2013${Math.min(start + PAGE_SIZE, sorted.length)} of ${sorted.length} position${sorted.length !== 1 ? 's' : ''}` : '0 positions'}
+          </span>
+        </div>
         {totalPages > 1 && <Pagination currentPage={safePage} totalPages={totalPages} onPageChange={setCurrentPage} />}
       </div>
 

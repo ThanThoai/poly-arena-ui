@@ -18,7 +18,9 @@ import TradingViewCharts from '@/components/tradingview-charts';
 import OrderbookDepth from '@/components/orderbook-depth';
 import ReportPage from '@/components/report-page';
 import BotManagerPage from '@/components/bot-manager-page';
+import FutureMarketPage from '@/components/future-market-page';
 import Toast from '@/components/ui/toast';
+import { MarketType } from '@/components/header';
 
 export default function Dashboard() {
   const { data, loading, refresh } = useDashboardData(30_000);
@@ -30,6 +32,7 @@ export default function Dashboard() {
   const [showRegisterBo, setShowRegisterBo] = useState(false);
   const [showApiExample, setShowApiExample] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'report' | 'bots' | 'admin'>('dashboard');
+  const [activeMarket, setActiveMarket] = useState<MarketType>('prediction');
   const [botRefreshKey, setBotRefreshKey] = useState(0);
   const [sessionOffset, setSessionOffset] = useState(0);
 
@@ -78,11 +81,20 @@ export default function Dashboard() {
         onCreateBot={() => setShowCreateBot(true)}
         activeTab={activeTab}
         onTabChange={handleTabChange}
+        activeMarket={activeMarket}
+        onMarketChange={setActiveMarket}
         bots={bots}
         trades={trades}
       />
 
-      {activeTab === 'report' ? (
+      {activeMarket === 'future' ? (
+        <FutureMarketPage
+          trades={trades}
+          bots={bots}
+          botPnls={data?.botPnls ?? []}
+          balanceHistory={balanceHistory}
+        />
+      ) : activeTab === 'report' ? (
         <ReportPage trades={trades} bots={bots} botAchievements={botAchievements} />
       ) : activeTab === 'bots' ? (
         <BotManagerPage

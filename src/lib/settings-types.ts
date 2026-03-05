@@ -1,7 +1,6 @@
 export interface BalanceChartSettings {
   timeframe?: string;
   selectedBots?: string[];
-  chartTab?: 'roi' | 'balance';
 }
 
 export interface OrderbookSettings {

@@ -23,7 +23,6 @@ interface PositionsTableProps {
 type ViewMode = 'table' | 'group';
 
 export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, initialSettings, onSettingsChange }: PositionsTableProps) {
-  const [userFilter, setUserFilter] = useState(initialSettings?.userFilter ?? '');
   const [botFilter, setBotFilter] = useState(initialSettings?.botFilter ?? '');
   const [symbolFilter, setSymbolFilter] = useState(initialSettings?.symbolFilter ?? '');
   const [timeframeFilter, setTimeframeFilter] = useState(initialSettings?.tfFilter ?? '');
@@ -38,25 +37,12 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
   const [inspectTrade, setInspectTrade] = useState<Trade | null>(null);
 
   const emitSettings = (patch: Partial<PositionsSettings>) => {
-    onSettingsChange?.({ userFilter, botFilter, symbolFilter, tfFilter: timeframeFilter, typeFilter, forecastFilter, viewMode, ...patch });
+    onSettingsChange?.({ botFilter, symbolFilter, tfFilter: timeframeFilter, typeFilter, forecastFilter, viewMode, ...patch });
   };
-
-  // Derive user names + bot→owner mapping from bots
-  const userNames = useMemo(() => {
-    const names = new Set<string>();
-    bots.forEach((b) => { if (b.owner_name) names.add(b.owner_name); });
-    return [...names].sort();
-  }, [bots]);
-  const botOwnerMap = useMemo(() => {
-    const m: Record<string, string> = {};
-    bots.forEach((b) => { if (b.owner_name) m[b.bot_name] = b.owner_name; });
-    return m;
-  }, [bots]);
 
   const pending = useMemo(() => trades.filter((t) => t.result === 'PENDING'), [trades]);
 
   const filtered = useMemo(() => pending.filter((t) => {
-    if (userFilter && botOwnerMap[t.bot_name] !== userFilter) return false;
     if (botFilter && t.bot_name !== botFilter) return false;
     if (symbolFilter && t.symbol !== symbolFilter) return false;
     if (timeframeFilter && t.timeframe !== timeframeFilter) return false;
@@ -74,19 +60,14 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
       : (t.session_offset ?? 0);
     if (dynamicOffset !== activeOffset) return false;
     return true;
-  }), [pending, userFilter, botFilter, symbolFilter, timeframeFilter, typeFilter, forecastFilter, sessionOffset, tick, botOwnerMap]);
+  }), [pending, botFilter, symbolFilter, timeframeFilter, typeFilter, forecastFilter, sessionOffset, tick]);
 
   const sorted = useMemo(
     () => [...filtered].sort((a, b) => (parseUTC(a.settlement_at)?.getTime() ?? 0) - (parseUTC(b.settlement_at)?.getTime() ?? 0)),
     [filtered],
   );
 
-  // Filter bot list by selected user
-  const botNames = useMemo(() => {
-    let list = bots;
-    if (userFilter) list = list.filter((b) => b.owner_name === userFilter);
-    return list.map((b) => b.bot_name).sort();
-  }, [bots, userFilter]);
+  const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
 
   const filteredStats = useMemo(() => {
     const totalAmount = sorted.reduce((s, t) => s + t.amount, 0);
@@ -113,8 +94,8 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
   const start = (safePage - 1) * PAGE_SIZE;
   const paged = sorted.slice(start, start + PAGE_SIZE);
 
-  const hasActiveFilter = userFilter !== '' || botFilter !== '' || symbolFilter !== '' || timeframeFilter !== '' || typeFilter !== '' || forecastFilter !== '';
-  const clearFilters = () => { setUserFilter(''); setBotFilter(''); setSymbolFilter(''); setTimeframeFilter(''); setTypeFilter(''); setForecastFilter(''); setCurrentPage(1); onSettingsChange?.({ userFilter: '', botFilter: '', symbolFilter: '', tfFilter: '', typeFilter: '', forecastFilter: '', viewMode }); };
+  const hasActiveFilter = botFilter !== '' || symbolFilter !== '' || timeframeFilter !== '' || typeFilter !== '' || forecastFilter !== '';
+  const clearFilters = () => { setBotFilter(''); setSymbolFilter(''); setTimeframeFilter(''); setTypeFilter(''); setForecastFilter(''); setCurrentPage(1); onSettingsChange?.({ botFilter: '', symbolFilter: '', tfFilter: '', typeFilter: '', forecastFilter: '', viewMode }); };
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
@@ -239,15 +220,6 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {userNames.length > 1 && (
-            <CustomSelect
-              placeholder="All Users"
-              options={[{ value: '', label: 'All Users' }, ...userNames.map((n) => ({ value: n, label: n }))]}
-              value={userFilter}
-              onChange={(v) => { setUserFilter(v); setBotFilter(''); emitSettings({ userFilter: v, botFilter: '' }); }}
-              searchable
-            />
-          )}
           <CustomSelect
             placeholder="All Bots"
             options={[{ value: '', label: 'All Bots' }, ...botNames.map((n) => ({ value: n, label: n }))]}

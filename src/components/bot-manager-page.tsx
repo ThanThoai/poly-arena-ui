@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { apiFetch, Bot, BotPnl } from '@/lib/api';
 import { showToast } from '@/components/ui/toast';
 
@@ -163,6 +163,28 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
     }
   };
 
+  const summary = useMemo(() => {
+    let totalInitial = 0;
+    let totalEquity = 0;
+    let totalPnl = 0;
+    let totalFees = 0;
+    let activeCount = 0;
+    let pausedCount = 0;
+    for (const bot of myBots) {
+      const bp = botPnls.get(bot.bot_name);
+      const equity = bp?.current_balance ?? bot.balance;
+      const pnl = bp?.realized_pnl ?? (equity - bot.initial_balance);
+      totalInitial += bot.initial_balance;
+      totalEquity += equity;
+      totalPnl += pnl;
+      totalFees += bp?.total_fees ?? 0;
+      if (bot.status === 'ACTIVE') activeCount++;
+      else if (bot.status === 'PAUSED') pausedCount++;
+    }
+    const avgRoi = totalInitial > 0 ? (totalPnl / totalInitial) * 100 : 0;
+    return { totalInitial, totalEquity, totalPnl, totalFees, avgRoi, activeCount, pausedCount, total: myBots.length };
+  }, [myBots, botPnls]);
+
   return (
     <main className="max-w-[1900px] mx-auto px-5 py-5 space-y-5">
       {/* Actions */}
@@ -200,6 +222,7 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
                   <th className="text-right px-5 py-2.5 font-medium">Initial</th>
                   <th className="text-right px-5 py-2.5 font-medium">Balance</th>
                   <th className="text-right px-5 py-2.5 font-medium">P&L</th>
+                  <th className="text-right px-5 py-2.5 font-medium">Fee</th>
                   <th className="text-right px-5 py-2.5 font-medium">ROI</th>
                   <th className="text-right px-5 py-2.5 font-medium">Created</th>
                   <th className="text-center px-5 py-2.5 font-medium">Actions</th>
@@ -210,6 +233,7 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
                   const bp = botPnls.get(bot.bot_name);
                   const equity = bp?.current_balance ?? bot.balance;
                   const pnl = bp?.realized_pnl ?? (equity - bot.initial_balance);
+                  const fees = bp?.total_fees ?? 0;
                   const roi = bp?.realized_pnl_pct ?? (bot.initial_balance > 0 ? (pnl / bot.initial_balance) * 100 : 0);
                   const isRenaming = renamingId === bot.id;
                   return (
@@ -253,6 +277,9 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
                       <td className="px-5 py-3 text-right text-slate-200 font-medium">${equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className={`px-5 py-3 text-right font-medium ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {pnl >= 0 ? '+' : ''}{pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-5 py-3 text-right text-slate-500">
+                        {fees > 0 ? `$${fees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '\u2014'}
                       </td>
                       <td className={`px-5 py-3 text-right font-medium ${roi >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {roi >= 0 ? '+' : ''}{roi.toFixed(2)}%
@@ -303,6 +330,38 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
                   );
                 })}
               </tbody>
+              {myBots.length > 1 && (
+                <tfoot>
+                  <tr className="border-t border-[#1a1a2e] bg-[#0a0a14]">
+                    <td className="px-5 py-3 font-semibold text-slate-300 text-xs">
+                      Total ({summary.total} bots)
+                    </td>
+                    <td className="px-5 py-3 text-center">
+                      <div className="flex items-center justify-center gap-2 text-[10px]">
+                        {summary.activeCount > 0 && <span className="text-emerald-400">{summary.activeCount} active</span>}
+                        {summary.pausedCount > 0 && <span className="text-amber-400">{summary.pausedCount} paused</span>}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 text-right text-slate-300 font-semibold text-xs">
+                      ${summary.totalInitial.toLocaleString()}
+                    </td>
+                    <td className="px-5 py-3 text-right text-slate-200 font-bold text-xs">
+                      ${summary.totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className={`px-5 py-3 text-right font-bold text-xs ${summary.totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {summary.totalPnl >= 0 ? '+' : ''}{summary.totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-5 py-3 text-right font-semibold text-xs text-slate-500">
+                      {summary.totalFees > 0 ? `$${summary.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '\u2014'}
+                    </td>
+                    <td className={`px-5 py-3 text-right font-bold text-xs ${summary.avgRoi >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {summary.avgRoi >= 0 ? '+' : ''}{summary.avgRoi.toFixed(2)}%
+                    </td>
+                    <td className="px-5 py-3" />
+                    <td className="px-5 py-3" />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         )}

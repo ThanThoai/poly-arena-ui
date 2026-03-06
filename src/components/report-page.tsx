@@ -131,6 +131,56 @@ function computeByTimeframe(settled: Trade[]): TfRow[] {
   });
 }
 
+interface MarketSessionRow {
+  symbol: string;
+  tf: string;
+  forecast: string;
+  wins: number;
+  losses: number;
+  candles: number;
+  pnl: number;
+  wr: string;
+  trades: number;
+}
+
+function computeByMarketSession(allTrades: Trade[]): MarketSessionRow[] {
+  // Only count WIN/LOSS trades — skip CANCELLED/PENDING
+  const decided = allTrades.filter((t) => t.result === 'WIN' || t.result === 'LOSS');
+
+  // Group by (symbol, tf, forecast) → then by unique candle (candle_open)
+  const groupMap: Record<string, Map<number, { result: string; pnl: number; count: number }>> = {};
+  for (const t of decided) {
+    const groupKey = `${t.symbol}|${t.timeframe}|${t.forecast}`;
+    if (!groupMap[groupKey]) groupMap[groupKey] = new Map();
+    const candleKey = t.candle_open ?? 0;
+    const existing = groupMap[groupKey].get(candleKey);
+    if (!existing) {
+      groupMap[groupKey].set(candleKey, { result: t.result!, pnl: t.profit || 0, count: 1 });
+    } else {
+      existing.pnl += t.profit || 0;
+      existing.count++;
+    }
+  }
+  return Object.entries(groupMap)
+    .map(([key, candles]) => {
+      const [symbol, tf, forecast] = key.split('|');
+      let wins = 0, losses = 0, pnl = 0, trades = 0;
+      for (const c of candles.values()) {
+        if (c.result === 'WIN') wins++;
+        else losses++;
+        pnl += c.pnl;
+        trades += c.count;
+      }
+      const total = wins + losses;
+      return {
+        symbol, tf, forecast,
+        wins, losses, candles: total, pnl, trades,
+        wr: total > 0 ? ((wins / total) * 100).toFixed(1) + '%' : '—',
+      };
+    })
+    .sort((a, b) => a.symbol.localeCompare(b.symbol) || a.tf.localeCompare(b.tf) || a.forecast.localeCompare(b.forecast));
+}
+
 function computeRadarData(settled: Trade[]): number[] {
   const data: number[] = [];
   for (const sym of RADAR_SYMS) {
@@ -507,7 +557,7 @@ export default function ReportPage({ trades, bots, botAchievements = {} }: Repor
   const [compareBots, setCompareBots] = useState<string[]>([]);
 
   const botTrades = useMemo(
-    () => (selectedBot ? trades.filter((t) => t.bot_name === selectedBot) : []),
+    () => (selectedBot ? trades.filter((t) => t.bot_name === selectedBot) : trades),
     [trades, selectedBot],
   );
   const settled = useMemo(() => botTrades.filter((t) => t.result !== 'PENDING'), [botTrades]);
@@ -523,6 +573,9 @@ export default function ReportPage({ trades, bots, botAchievements = {} }: Repor
 
   // By Timeframe
   const byTimeframe = useMemo(() => computeByTimeframe(settled), [settled]);
+
+  // By Market Session (symbol × timeframe × forecast)
+  const byMarketSession = useMemo(() => computeByMarketSession(settled), [settled]);
 
   // Radar
   const botColor = selectedBot
@@ -701,6 +754,11 @@ export default function ReportPage({ trades, bots, botAchievements = {} }: Repor
             <KpiCard label="Win / Loss" value={stats.wlRatio} cls="text-sky-400" />
           </div>
 
+          {/* Per-bot summary table (All Bots) */}
+          {!selectedBot && bots.length > 1 && (
+            <BotSummaryTable trades={trades} bots={bots} botNames={botNames} />
+          )}
+
           {/* Achievements */}
           {selectedBot && (() => {
             const bot = bots.find((b) => b.bot_name === selectedBot);
@@ -793,6 +851,74 @@ export default function ReportPage({ trades, bots, botAchievements = {} }: Repor
             ))}
           </div>
 
+          {/* By Market Session (Symbol × TF × Forecast) */}
+          {byMarketSession.length > 0 && (
+            <div className="card overflow-hidden">
+              <div className="px-4 py-3 border-b border-[#1a1a2a]">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">By Market Session</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
+                      <th className="px-4 py-2 text-left font-medium">Symbol</th>
+                      <th className="px-4 py-2 text-left font-medium">TF</th>
+                      <th className="px-4 py-2 text-left font-medium">Forecast</th>
+                      <th className="px-4 py-2 text-right font-medium">W</th>
+                      <th className="px-4 py-2 text-right font-medium">L</th>
+                      <th className="px-4 py-2 text-right font-medium">Candles</th>
+                      <th className="px-4 py-2 text-right font-medium">Trades</th>
+                      <th className="px-4 py-2 text-right font-medium">Win Rate</th>
+                      <th className="px-4 py-2 text-right font-medium">P&L</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {byMarketSession.map((r) => (
+                      <tr key={`${r.symbol}-${r.tf}-${r.forecast}`} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
+                        <td className="px-4 py-2 text-slate-200 font-semibold">{r.symbol}</td>
+                        <td className="px-4 py-2 text-slate-400">{r.tf}</td>
+                        <td className="px-4 py-2">
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${r.forecast === 'GREEN' ? 'text-emerald-400 bg-emerald-400/10' : 'text-rose-400 bg-rose-400/10'}`}>
+                            {r.forecast}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right text-emerald-400">{r.wins}</td>
+                        <td className="px-4 py-2 text-right text-rose-400">{r.losses}</td>
+                        <td className="px-4 py-2 text-right text-slate-300">{r.candles}</td>
+                        <td className="px-4 py-2 text-right text-slate-500">{r.trades}</td>
+                        <td className="px-4 py-2 text-right font-semibold text-slate-200">{r.wr}</td>
+                        <td className={`px-4 py-2 text-right font-semibold ${pnlCls(r.pnl)}`}>{money(r.pnl)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  {byMarketSession.length > 1 && (() => {
+                    const tW = byMarketSession.reduce((s, r) => s + r.wins, 0);
+                    const tL = byMarketSession.reduce((s, r) => s + r.losses, 0);
+                    const tCandles = byMarketSession.reduce((s, r) => s + r.candles, 0);
+                    const tTrades = byMarketSession.reduce((s, r) => s + r.trades, 0);
+                    const tP = byMarketSession.reduce((s, r) => s + r.pnl, 0);
+                    const wr = tCandles > 0 ? ((tW / tCandles) * 100).toFixed(1) + '%' : '—';
+                    return (
+                      <tfoot>
+                        <tr className="border-t border-[#1a1a2e] bg-[#0a0a14]">
+                          <td colSpan={3} className="px-4 py-2 font-semibold text-slate-300">
+                            Total ({byMarketSession.length} groups)
+                          </td>
+                          <td className="px-4 py-2 text-right font-semibold text-emerald-400">{tW}</td>
+                          <td className="px-4 py-2 text-right font-semibold text-rose-400">{tL}</td>
+                          <td className="px-4 py-2 text-right font-semibold text-slate-300">{tCandles}</td>
+                          <td className="px-4 py-2 text-right font-semibold text-slate-500">{tTrades}</td>
+                          <td className="px-4 py-2 text-right font-bold text-slate-200">{wr}</td>
+                          <td className={`px-4 py-2 text-right font-bold ${pnlCls(tP)}`}>{money(tP)}</td>
+                        </tr>
+                      </tfoot>
+                    );
+                  })()}
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* Radar Chart */}
           {selectedBot && settled.length > 0 && (
             <div className="card p-5">
@@ -829,6 +955,119 @@ export default function ReportPage({ trades, bots, botAchievements = {} }: Repor
         </>
       )}
     </main>
+  );
+}
+
+function BotSummaryTable({ trades, bots, botNames }: { trades: Trade[]; bots: Bot[]; botNames: string[] }) {
+  const rows = useMemo(() => {
+    return botNames.map((name) => {
+      const botSettled = trades.filter((t) => t.bot_name === name && t.result !== 'PENDING');
+      const wins = botSettled.filter((t) => t.result === 'WIN').length;
+      const losses = botSettled.filter((t) => t.result === 'LOSS').length;
+      const cancelled = botSettled.filter((t) => t.result === 'CANCELLED').length;
+      const total = botSettled.length;
+      const decided = wins + losses;
+      const wr = decided > 0 ? (wins / decided) * 100 : 0;
+      const pnl = botSettled.reduce((s, t) => s + (t.profit || 0), 0);
+      const avg = decided > 0 ? pnl / decided : 0;
+      const bot = bots.find((b) => b.bot_name === name);
+      const initial = bot?.initial_balance ?? 0;
+      const roi = initial > 0 ? (pnl / initial) * 100 : 0;
+      const color = BOT_PALETTE[botNames.indexOf(name) % BOT_PALETTE.length];
+      return { name, color, wins, losses, cancelled, total, decided, wr, pnl, avg, initial, roi };
+    }).filter((r) => r.total > 0);
+  }, [trades, bots, botNames]);
+
+  const totals = useMemo(() => {
+    const wins = rows.reduce((s, r) => s + r.wins, 0);
+    const losses = rows.reduce((s, r) => s + r.losses, 0);
+    const cancelled = rows.reduce((s, r) => s + r.cancelled, 0);
+    const total = rows.reduce((s, r) => s + r.total, 0);
+    const decided = wins + losses;
+    const wr = decided > 0 ? (wins / decided) * 100 : 0;
+    const pnl = rows.reduce((s, r) => s + r.pnl, 0);
+    const avg = decided > 0 ? pnl / decided : 0;
+    const initial = rows.reduce((s, r) => s + r.initial, 0);
+    const roi = initial > 0 ? (pnl / initial) * 100 : 0;
+    return { wins, losses, cancelled, total, decided, wr, pnl, avg, initial, roi };
+  }, [rows]);
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#1a1a2a]">
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Bot Summary</h3>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
+              <th className="px-4 py-2.5 text-left font-medium">Bot</th>
+              <th className="px-4 py-2.5 text-right font-medium">Trades</th>
+              <th className="px-4 py-2.5 text-right font-medium">W</th>
+              <th className="px-4 py-2.5 text-right font-medium">L</th>
+              <th className="px-4 py-2.5 text-right font-medium">C</th>
+              <th className="px-4 py-2.5 text-right font-medium">Win Rate</th>
+              <th className="px-4 py-2.5 text-right font-medium">P&L</th>
+              <th className="px-4 py-2.5 text-right font-medium">Avg/Trade</th>
+              <th className="px-4 py-2.5 text-right font-medium">ROI</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.name} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
+                <td className="px-4 py-2.5">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: r.color }} />
+                    <span className="text-slate-200 font-medium">{r.name}</span>
+                  </span>
+                </td>
+                <td className="px-4 py-2.5 text-right text-slate-300">{r.total}</td>
+                <td className="px-4 py-2.5 text-right text-emerald-400">{r.wins}</td>
+                <td className="px-4 py-2.5 text-right text-rose-400">{r.losses}</td>
+                <td className="px-4 py-2.5 text-right text-slate-500">{r.cancelled}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-slate-200">
+                  {r.decided > 0 ? r.wr.toFixed(1) + '%' : '\u2014'}
+                </td>
+                <td className={`px-4 py-2.5 text-right font-semibold ${pnlCls(r.pnl)}`}>
+                  {money(r.pnl)}
+                </td>
+                <td className={`px-4 py-2.5 text-right ${pnlCls(r.avg)}`}>
+                  {money(r.avg)}
+                </td>
+                <td className={`px-4 py-2.5 text-right font-semibold ${pnlCls(r.roi)}`}>
+                  {r.roi >= 0 ? '+' : ''}{r.roi.toFixed(2)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          {rows.length > 1 && (
+            <tfoot>
+              <tr className="border-t border-[#1a1a2e] bg-[#0a0a14]">
+                <td className="px-4 py-2.5 font-semibold text-slate-300">Total ({rows.length} bots)</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-slate-300">{totals.total}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-emerald-400">{totals.wins}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-rose-400">{totals.losses}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-slate-500">{totals.cancelled}</td>
+                <td className="px-4 py-2.5 text-right font-bold text-slate-200">
+                  {totals.decided > 0 ? totals.wr.toFixed(1) + '%' : '\u2014'}
+                </td>
+                <td className={`px-4 py-2.5 text-right font-bold ${pnlCls(totals.pnl)}`}>
+                  {money(totals.pnl)}
+                </td>
+                <td className={`px-4 py-2.5 text-right font-bold ${pnlCls(totals.avg)}`}>
+                  {money(totals.avg)}
+                </td>
+                <td className={`px-4 py-2.5 text-right font-bold ${pnlCls(totals.roi)}`}>
+                  {totals.roi >= 0 ? '+' : ''}{totals.roi.toFixed(2)}%
+                </td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
   );
 }
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { apiFetch, Bot } from '@/lib/api';
+import { apiFetch, Bot, BotPnl } from '@/lib/api';
 import { showToast } from '@/components/ui/toast';
 
 interface BotManagerPageProps {
@@ -19,6 +19,7 @@ type PendingAction = {
 
 export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: BotManagerPageProps) {
   const [myBots, setMyBots] = useState<Bot[]>([]);
+  const [botPnls, setBotPnls] = useState<Map<string, BotPnl>>(new Map());
   const [loading, setLoading] = useState(true);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
@@ -34,8 +35,14 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
 
   const fetchMyBots = useCallback(async () => {
     try {
-      const bots = await apiFetch<Bot[]>('/bots');
+      const [bots, pnls] = await Promise.all([
+        apiFetch<Bot[]>('/bots'),
+        apiFetch<BotPnl[]>('/bots/pnl').catch(() => [] as BotPnl[]),
+      ]);
       setMyBots(bots);
+      const m = new Map<string, BotPnl>();
+      for (const p of pnls) m.set(p.bot_name, p);
+      setBotPnls(m);
     } catch {
       // ignore
     } finally {
@@ -200,8 +207,10 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
               </thead>
               <tbody>
                 {myBots.map((bot) => {
-                  const pnl = bot.balance - bot.initial_balance;
-                  const roi = bot.initial_balance > 0 ? (pnl / bot.initial_balance) * 100 : 0;
+                  const bp = botPnls.get(bot.bot_name);
+                  const equity = bp?.current_balance ?? bot.balance;
+                  const pnl = bp?.realized_pnl ?? (equity - bot.initial_balance);
+                  const roi = bp?.realized_pnl_pct ?? (bot.initial_balance > 0 ? (pnl / bot.initial_balance) * 100 : 0);
                   const isRenaming = renamingId === bot.id;
                   return (
                     <tr key={bot.id} className="border-b border-[#111122] hover:bg-white/[.02] transition-colors">
@@ -241,7 +250,7 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
                         })()}
                       </td>
                       <td className="px-5 py-3 text-right text-slate-400">${bot.initial_balance.toLocaleString()}</td>
-                      <td className="px-5 py-3 text-right text-slate-200 font-medium">${bot.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="px-5 py-3 text-right text-slate-200 font-medium">${equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className={`px-5 py-3 text-right font-medium ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {pnl >= 0 ? '+' : ''}{pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>

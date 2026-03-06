@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Trade, Bot } from '@/lib/api';
 import { BOT_PALETTE, parseUTC, dtMs, dtShort, dtParts, fmtDiff, fmtCents, TF_PERIOD_MS, money } from '@/lib/helpers';
 import SymbolBadge from '@/components/ui/symbol-badge';
@@ -20,6 +20,8 @@ interface PositionsTableProps {
   onSettingsChange?: (s: PositionsSettings) => void;
 }
 
+type ViewMode = 'table' | 'group';
+
 export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, initialSettings, onSettingsChange }: PositionsTableProps) {
   const [userFilter, setUserFilter] = useState(initialSettings?.userFilter ?? '');
   const [botFilter, setBotFilter] = useState(initialSettings?.botFilter ?? '');
@@ -27,14 +29,16 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
   const [timeframeFilter, setTimeframeFilter] = useState(initialSettings?.tfFilter ?? '');
   const [typeFilter, setTypeFilter] = useState(initialSettings?.typeFilter ?? '');
   const [forecastFilter, setForecastFilter] = useState(initialSettings?.forecastFilter ?? '');
+  const [viewMode, setViewMode] = useState<ViewMode>(initialSettings?.viewMode ?? 'table');
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  const [collapsedBots, setCollapsedBots] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [tick, setTick] = useState(0);
   const [traceTrade, setTraceTrade] = useState<Trade | null>(null);
   const [inspectTrade, setInspectTrade] = useState<Trade | null>(null);
 
-  const emitPositionSettings = (patch: Partial<PositionsSettings>) => {
-    onSettingsChange?.({ userFilter, botFilter, symbolFilter, tfFilter: timeframeFilter, typeFilter, forecastFilter, ...patch });
+  const emitSettings = (patch: Partial<PositionsSettings>) => {
+    onSettingsChange?.({ userFilter, botFilter, symbolFilter, tfFilter: timeframeFilter, typeFilter, forecastFilter, viewMode, ...patch });
   };
 
   // Derive user names + bot→owner mapping from bots
@@ -59,8 +63,6 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
     if (typeFilter === 'MARKET' && t.limit_price != null) return false;
     if (typeFilter === 'LIMIT' && t.limit_price == null) return false;
     if (forecastFilter && t.forecast !== forecastFilter) return false;
-    // Dynamic session offset: compare settlement candle vs current candle
-    // so A+1 orders auto-move to current tab when their candle starts.
     const activeOffset = sessionOffset ?? 0;
     const periodMs = TF_PERIOD_MS[t.timeframe] ?? 300_000;
     const settleMs = t.settlement_at ? parseUTC(t.settlement_at)?.getTime() ?? 0 : 0;
@@ -73,6 +75,7 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
     if (dynamicOffset !== activeOffset) return false;
     return true;
   }), [pending, userFilter, botFilter, symbolFilter, timeframeFilter, typeFilter, forecastFilter, sessionOffset, tick, botOwnerMap]);
+
   const sorted = useMemo(
     () => [...filtered].sort((a, b) => (parseUTC(a.settlement_at)?.getTime() ?? 0) - (parseUTC(b.settlement_at)?.getTime() ?? 0)),
     [filtered],
@@ -91,6 +94,19 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
     return { totalAmount, totalFees, count: sorted.length };
   }, [sorted]);
 
+  // Group by bot for group view
+  const botGroups = useMemo(() => {
+    if (viewMode !== 'group') return [];
+    const map = new Map<string, Trade[]>();
+    for (const t of sorted) {
+      if (!map.has(t.bot_name)) map.set(t.bot_name, []);
+      map.get(t.bot_name)!.push(t);
+    }
+    return [...map.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, trades]) => ({ name, trades }));
+  }, [sorted, viewMode]);
+
   const PAGE_SIZE = 10;
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -98,7 +114,7 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
   const paged = sorted.slice(start, start + PAGE_SIZE);
 
   const hasActiveFilter = userFilter !== '' || botFilter !== '' || symbolFilter !== '' || timeframeFilter !== '' || typeFilter !== '' || forecastFilter !== '';
-  const clearFilters = () => { setUserFilter(''); setBotFilter(''); setSymbolFilter(''); setTimeframeFilter(''); setTypeFilter(''); setForecastFilter(''); setCurrentPage(1); onSettingsChange?.({ userFilter: '', botFilter: '', symbolFilter: '', tfFilter: '', typeFilter: '', forecastFilter: '' }); };
+  const clearFilters = () => { setUserFilter(''); setBotFilter(''); setSymbolFilter(''); setTimeframeFilter(''); setTypeFilter(''); setForecastFilter(''); setCurrentPage(1); onSettingsChange?.({ userFilter: '', botFilter: '', symbolFilter: '', tfFilter: '', typeFilter: '', forecastFilter: '', viewMode }); };
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
@@ -114,7 +130,58 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
     });
   };
 
+  const toggleBotGroup = (name: string) => {
+    setCollapsedBots((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
   const now = Date.now();
+
+  const tradeRowProps = (t: Trade) => {
+    const isOpen = expandedRows.has(t.id);
+    const fCls =
+      t.forecast === 'GREEN'
+        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+        : 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+    const botIdx = bots.findIndex((b) => b.bot_name === t.bot_name);
+    const bColor = BOT_PALETTE[botIdx >= 0 ? botIdx % BOT_PALETTE.length : 0];
+    const settleMs = t.settlement_at ? parseUTC(t.settlement_at)?.getTime() ?? 0 : 0;
+    const diff = settleMs - now;
+    const settling = diff <= 0 && settleMs > 0;
+    const cd = diff > 0 ? fmtDiff(diff) : settling ? 'settling' : '\u2014';
+    const isA1 = (t.session_offset ?? 0) > 0;
+    const periodMs = TF_PERIOD_MS[t.timeframe] ?? 300_000;
+    const candleOpenMs = settleMs > 0 ? settleMs - periodMs : 0;
+    const candleStartDiff = candleOpenMs - now;
+    const candleActive = candleStartDiff <= 0;
+    const createdMs = t.created_at ? parseUTC(t.created_at)?.getTime() ?? 0 : 0;
+    const total = settleMs - createdMs;
+    const pctVal = total > 0 ? Math.min(100, Math.max(0, ((now - createdMs) / total) * 100)) : 100;
+    const orderMs = t.order_received_at ? parseUTC(t.order_received_at)?.getTime() ?? null : null;
+    const fillMs = t.ask_fetched_at ? parseUTC(t.ask_fetched_at)?.getTime() ?? null : null;
+    const lat = orderMs != null && fillMs != null ? fillMs - orderMs : null;
+    return {
+      trade: t, open: isOpen, forecastCls: fCls, botColor: bColor, countdown: cd,
+      pct: pctVal, now, latencyMs: lat, isA1, settling, candleStartDiff, candleActive,
+      onToggle: () => toggleDetail(t.id), onTrace: () => setTraceTrade(t),
+      isAdmin, onInspect: () => setInspectTrade(t),
+    };
+  };
+
+  const switchMode = (m: ViewMode) => {
+    setViewMode(m);
+    if (m === 'group') {
+      // Default all groups collapsed
+      setCollapsedBots(new Set(sorted.map((t) => t.bot_name)));
+    } else {
+      setCollapsedBots(new Set());
+    }
+    emitSettings({ viewMode: m });
+  };
 
   return (
     <div className="card overflow-hidden">
@@ -140,6 +207,36 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
               )}
             </span>
           )}
+
+          {/* View mode toggle */}
+          <div className="flex items-center rounded-lg border border-[#1f1f32] overflow-hidden ml-2">
+            <button
+              onClick={() => switchMode('table')}
+              className={`h-[26px] px-2.5 text-[10px] font-semibold transition-colors ${
+                viewMode === 'table'
+                  ? 'bg-violet-600/20 text-violet-400 border-r border-[#1f1f32]'
+                  : 'text-slate-500 hover:text-slate-300 border-r border-[#1f1f32]'
+              }`}
+              title="Table view"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <button
+              onClick={() => switchMode('group')}
+              className={`h-[26px] px-2.5 text-[10px] font-semibold transition-colors ${
+                viewMode === 'group'
+                  ? 'bg-violet-600/20 text-violet-400'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+              title="Group by Bot"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+            </button>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {userNames.length > 1 && (
@@ -147,7 +244,7 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
               placeholder="All Users"
               options={[{ value: '', label: 'All Users' }, ...userNames.map((n) => ({ value: n, label: n }))]}
               value={userFilter}
-              onChange={(v) => { setUserFilter(v); setBotFilter(''); emitPositionSettings({ userFilter: v, botFilter: '' }); }}
+              onChange={(v) => { setUserFilter(v); setBotFilter(''); emitSettings({ userFilter: v, botFilter: '' }); }}
               searchable
             />
           )}
@@ -155,20 +252,20 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
             placeholder="All Bots"
             options={[{ value: '', label: 'All Bots' }, ...botNames.map((n) => ({ value: n, label: n }))]}
             value={botFilter}
-            onChange={(v) => { setBotFilter(v); emitPositionSettings({ botFilter: v }); }}
+            onChange={(v) => { setBotFilter(v); emitSettings({ botFilter: v }); }}
             searchable
           />
           <CustomSelect
             placeholder="All Symbols"
             options={[
               { value: '', label: 'All Symbols' },
-              { value: 'BTC', label: '₿ BTC' },
-              { value: 'ETH', label: 'Ξ ETH' },
-              { value: 'SOL', label: '◎ SOL' },
-              { value: 'XRP', label: '✕ XRP' },
+              { value: 'BTC', label: '\u20BF BTC' },
+              { value: 'ETH', label: '\u039E ETH' },
+              { value: 'SOL', label: '\u25CE SOL' },
+              { value: 'XRP', label: '\u2715 XRP' },
             ]}
             value={symbolFilter}
-            onChange={(v) => { setSymbolFilter(v); emitPositionSettings({ symbolFilter: v }); }}
+            onChange={(v) => { setSymbolFilter(v); emitSettings({ symbolFilter: v }); }}
           />
           <CustomSelect
             placeholder="All TF"
@@ -179,7 +276,7 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
               { value: 'H1', label: '1h' },
             ]}
             value={timeframeFilter}
-            onChange={(v) => { setTimeframeFilter(v); emitPositionSettings({ tfFilter: v }); }}
+            onChange={(v) => { setTimeframeFilter(v); emitSettings({ tfFilter: v }); }}
           />
           <CustomSelect
             placeholder="All Types"
@@ -189,7 +286,7 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
               { value: 'LIMIT', label: 'LIMIT' },
             ]}
             value={typeFilter}
-            onChange={(v) => { setTypeFilter(v); emitPositionSettings({ typeFilter: v }); }}
+            onChange={(v) => { setTypeFilter(v); emitSettings({ typeFilter: v }); }}
           />
           <CustomSelect
             placeholder="All Forecasts"
@@ -199,7 +296,7 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
               { value: 'RED', label: '\u25CF RED' },
             ]}
             value={forecastFilter}
-            onChange={(v) => { setForecastFilter(v); emitPositionSettings({ forecastFilter: v }); }}
+            onChange={(v) => { setForecastFilter(v); emitSettings({ forecastFilter: v }); }}
           />
           {hasActiveFilter && (
             <button
@@ -233,60 +330,99 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
             </tr>
           </thead>
           <tbody>
-            {paged.length === 0 ? (
+            {sorted.length === 0 ? (
               <tr><td colSpan={14} className="px-5 py-8 text-center text-slate-600">No open positions</td></tr>
-            ) : (
-              paged.map((t) => {
-                const open = expandedRows.has(t.id);
-                const forecastCls =
-                  t.forecast === 'GREEN'
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                    : 'bg-rose-500/10 text-rose-400 border-rose-500/20';
-                const botIdx = bots.findIndex((b) => b.bot_name === t.bot_name);
+            ) : viewMode === 'group' ? (
+              botGroups.map((group) => {
+                const collapsed = collapsedBots.has(group.name);
+                const totalAmt = group.trades.reduce((s, t) => s + t.amount, 0);
+                const totalFee = group.trades.reduce((s, t) => s + (t.entry_fee ?? 0), 0);
+                const totalShares = group.trades.reduce((s, t) => s + (t.num_shares ?? 0), 0);
+                const greenCount = group.trades.filter((t) => t.forecast === 'GREEN').length;
+                const redCount = group.trades.filter((t) => t.forecast === 'RED').length;
+                const botIdx = bots.findIndex((b) => b.bot_name === group.name);
                 const botColor = BOT_PALETTE[botIdx >= 0 ? botIdx % BOT_PALETTE.length : 0];
-                const settleMs = t.settlement_at ? parseUTC(t.settlement_at)?.getTime() ?? 0 : 0;
-                const diff = settleMs - now;
-                const settling = diff <= 0 && settleMs > 0;
-                const countdown = diff > 0 ? fmtDiff(diff) : settling ? 'settling' : '\u2014';
 
-                // A+1: candle open = settlement_at - period
-                const isA1 = (t.session_offset ?? 0) > 0;
-                const periodMs = TF_PERIOD_MS[t.timeframe] ?? 300_000;
-                const candleOpenMs = settleMs > 0 ? settleMs - periodMs : 0;
-                const candleStartDiff = candleOpenMs - now;
-                const candleActive = candleStartDiff <= 0;
-
-                const createdMs = t.created_at ? parseUTC(t.created_at)?.getTime() ?? 0 : 0;
-                const total = settleMs - createdMs;
-                const pct = total > 0 ? Math.min(100, Math.max(0, ((now - createdMs) / total) * 100)) : 100;
-
-                // Latency: ms between order_received_at and ask_fetched_at
-                const orderMs = t.order_received_at ? parseUTC(t.order_received_at)?.getTime() ?? null : null;
-                const fillMs  = t.ask_fetched_at   ? parseUTC(t.ask_fetched_at)?.getTime()   ?? null : null;
-                const latencyMs = orderMs != null && fillMs != null ? fillMs - orderMs : null;
+                // Unique symbols & timeframes in this group
+                const symbols = [...new Set(group.trades.map((t) => t.symbol))];
+                const tfs = [...new Set(group.trades.map((t) => t.timeframe))];
 
                 return (
-                  <PositionRow
-                    key={t.id}
-                    trade={t}
-                    open={open}
-                    forecastCls={forecastCls}
-                    botColor={botColor}
-                    countdown={countdown}
-                    pct={pct}
-                    now={now}
-                    latencyMs={latencyMs}
-                    isA1={isA1}
-                    settling={settling}
-                    candleStartDiff={candleStartDiff}
-                    candleActive={candleActive}
-                    onToggle={() => toggleDetail(t.id)}
-                    onTrace={() => setTraceTrade(t)}
-                    isAdmin={isAdmin}
-                    onInspect={() => setInspectTrade(t)}
-                  />
+                  <React.Fragment key={group.name}>
+                    <tr
+                      onClick={() => toggleBotGroup(group.name)}
+                      className="border-b border-[#12121f] cursor-pointer select-none hover:bg-white/[.02] transition-colors"
+                      style={{ background: 'rgba(124,58,237,.04)' }}
+                    >
+                      <td colSpan={14} className="px-4 py-2.5">
+                        <div className="flex items-center gap-3">
+                          {/* Expand/collapse arrow */}
+                          <svg
+                            className="w-3 h-3 text-violet-400 transition-transform duration-150 shrink-0"
+                            style={{ transform: collapsed ? undefined : 'rotate(90deg)' }}
+                            fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+
+                          {/* Bot color dot + name */}
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: botColor }} />
+                          <span className="text-[12px] font-semibold text-slate-200">{group.name}</span>
+
+                          {/* Count badge */}
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/20 font-medium">
+                            {group.trades.length}
+                          </span>
+
+                          {/* Symbols */}
+                          <span className="text-[10px] text-slate-500">
+                            {symbols.join(', ')}
+                          </span>
+
+                          {/* Timeframes */}
+                          <span className="text-[10px] text-slate-600">
+                            {tfs.join(', ')}
+                          </span>
+
+                          {/* Forecast breakdown */}
+                          <span className="flex items-center gap-1.5 ml-1">
+                            {greenCount > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                {greenCount} GREEN
+                              </span>
+                            )}
+                            {redCount > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                                {redCount} RED
+                              </span>
+                            )}
+                          </span>
+
+                          {/* Aggregates */}
+                          <span className="text-[10px] text-slate-500 ml-auto flex items-center gap-3">
+                            <span>
+                              Locked <span className="font-semibold text-amber-400">${totalAmt.toFixed(2)}</span>
+                            </span>
+                            {totalFee > 0 && (
+                              <span>
+                                Fee <span className="text-slate-400">${totalFee.toFixed(2)}</span>
+                              </span>
+                            )}
+                            <span>
+                              Shares <span className="text-sky-400">{totalShares.toFixed(2)}</span>
+                            </span>
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                    {!collapsed && group.trades.map((t) => (
+                      <PositionRow key={t.id} {...tradeRowProps(t)} />
+                    ))}
+                  </React.Fragment>
                 );
               })
+            ) : (
+              paged.map((t) => <PositionRow key={t.id} {...tradeRowProps(t)} />)
             )}
           </tbody>
         </table>
@@ -296,10 +432,12 @@ export default function PositionsTable({ trades, bots, isAdmin, sessionOffset, i
       <div className="px-5 py-2.5 border-t border-[#1a1a2a] flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-[11px] text-slate-600">
-            {sorted.length ? `${start + 1}\u2013${Math.min(start + PAGE_SIZE, sorted.length)} of ${sorted.length} position${sorted.length !== 1 ? 's' : ''}` : '0 positions'}
+            {viewMode === 'group'
+              ? `${sorted.length} position${sorted.length !== 1 ? 's' : ''} in ${botGroups.length} bot${botGroups.length !== 1 ? 's' : ''}`
+              : sorted.length ? `${start + 1}\u2013${Math.min(start + PAGE_SIZE, sorted.length)} of ${sorted.length} position${sorted.length !== 1 ? 's' : ''}` : '0 positions'}
           </span>
         </div>
-        {totalPages > 1 && <Pagination currentPage={safePage} totalPages={totalPages} onPageChange={setCurrentPage} />}
+        {viewMode === 'table' && totalPages > 1 && <Pagination currentPage={safePage} totalPages={totalPages} onPageChange={setCurrentPage} />}
       </div>
 
       <OrderTraceModal open={traceTrade !== null} onClose={() => setTraceTrade(null)} trade={traceTrade} />

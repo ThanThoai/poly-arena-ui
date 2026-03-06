@@ -1,11 +1,12 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Trade, Bot } from '@/lib/api';
+import { Trade, Bot, BotPnl } from '@/lib/api';
 
 interface KpiCardsProps {
   trades: Trade[];
   bots: Bot[];
+  botPnls?: BotPnl[];
 }
 
 interface SessionStat {
@@ -43,8 +44,14 @@ interface CardDef {
   border: string;
 }
 
-export default function KpiCards({ trades, bots }: KpiCardsProps) {
+export default function KpiCards({ trades, bots, botPnls = [] }: KpiCardsProps) {
   const sessionStats = useMemo(() => computeSessionStats(trades), [trades]);
+
+  const pnlMap = useMemo(() => {
+    const m = new Map<string, BotPnl>();
+    for (const p of botPnls) m.set(p.bot_name, p);
+    return m;
+  }, [botPnls]);
 
   const cards = useMemo<CardDef[]>(() => {
     const fmtBal = (v: number) => '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -58,20 +65,23 @@ export default function KpiCards({ trades, bots }: KpiCardsProps) {
     );
 
     if (activeBots.length > 0) {
-      const byBalance = [...activeBots].sort((a, b) => b.balance - a.balance);
+      const getEquity = (b: Bot) => pnlMap.get(b.bot_name)?.current_balance ?? b.balance;
+      const byBalance = [...activeBots].sort((a, b) => getEquity(b) - getEquity(a));
       const topWin = byBalance[0];
       const topLoss = byBalance[byBalance.length - 1];
-      const topWinRoi = topWin.initial_balance > 0
-        ? ((topWin.balance - topWin.initial_balance) / topWin.initial_balance) * 100 : 0;
-      const topLossRoi = topLoss.initial_balance > 0
-        ? ((topLoss.balance - topLoss.initial_balance) / topLoss.initial_balance) * 100 : 0;
+      const topWinEquity = getEquity(topWin);
+      const topLossEquity = getEquity(topLoss);
+      const topWinRoi = pnlMap.get(topWin.bot_name)?.realized_pnl_pct
+        ?? (topWin.initial_balance > 0 ? ((topWinEquity - topWin.initial_balance) / topWin.initial_balance) * 100 : 0);
+      const topLossRoi = pnlMap.get(topLoss.bot_name)?.realized_pnl_pct
+        ?? (topLoss.initial_balance > 0 ? ((topLossEquity - topLoss.initial_balance) / topLoss.initial_balance) * 100 : 0);
 
       result.push(
         {
           label: 'Top Balance',
           icon: '\uD83E\uDD47',
           name: topWin.bot_name,
-          value: fmtBal(topWin.balance),
+          value: fmtBal(topWinEquity),
           sub: `Init ${fmtBal(topWin.initial_balance)} · ROI ${fmtPct(topWinRoi)}`,
           color: '#34d399',
           bg: '#0a1a14',
@@ -81,7 +91,7 @@ export default function KpiCards({ trades, bots }: KpiCardsProps) {
           label: 'Lowest Balance',
           icon: '\uD83E\uDD48',
           name: topLoss.bot_name,
-          value: fmtBal(topLoss.balance),
+          value: fmtBal(topLossEquity),
           sub: `Init ${fmtBal(topLoss.initial_balance)} · ROI ${fmtPct(topLossRoi)}`,
           color: '#f87171',
           bg: '#1a0a0a',
@@ -120,7 +130,7 @@ export default function KpiCards({ trades, bots }: KpiCardsProps) {
     }
 
     return result;
-  }, [bots, trades, sessionStats]);
+  }, [bots, trades, sessionStats, pnlMap]);
 
   if (cards.length === 0) {
     return (

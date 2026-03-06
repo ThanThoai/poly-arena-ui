@@ -145,11 +145,38 @@ export interface UserBalanceHistory {
 export interface UserBalanceSnapshot {
   id: number;
   user_id: number;
-  balance: number;
-  bot_balance: number;
-  available: number;
-  session_id: string | null;
   recorded_at: string | null;
+
+  // Session context
+  session_id: string | null;
+  candle_open: number | null;
+
+  // Capital breakdown
+  unallocated: number;
+  bot_cash: number;
+  bo_locked: number;
+  futures_locked: number;
+
+  // Equity
+  equity: number;
+
+  // Mark-to-market
+  bo_unrealized_pnl: number | null;
+  futures_unrealized_pnl: number | null;
+  unrealized_pnl: number | null;
+
+  // Net liquidation
+  net_liquidation: number;
+
+  // P&L tracking
+  cumulative_realized_pnl: number | null;
+  session_realized_pnl: number | null;
+  snapshot_delta: number | null;
+
+  // Metadata
+  active_bot_count: number | null;
+  open_bo_count: number | null;
+  open_futures_count: number | null;
 }
 
 export interface BotPnl {

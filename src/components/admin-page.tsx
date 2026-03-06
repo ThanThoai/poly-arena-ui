@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Fragment } from 'react';
-import { apiFetch, AdminUser, Bot, PriceHistoryEntry } from '@/lib/api';
+import { apiFetch, AdminUser, Bot, BotPnl, PriceHistoryEntry } from '@/lib/api';
 import { showToast } from '@/components/ui/toast';
 
 type Tab = 'users' | 'bots' | 'prices';
@@ -138,6 +138,7 @@ export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('users');
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [bots, setBots] = useState<(Bot & { owner_name?: string | null })[]>([]);
+  const [botPnlMap, setBotPnlMap] = useState<Map<string, BotPnl>>(new Map());
   const [loading, setLoading] = useState(true);
 
   // Balance adjust state
@@ -192,8 +193,14 @@ export default function AdminPage() {
 
   const fetchBots = useCallback(async () => {
     try {
-      const data = await apiFetch<(Bot & { owner_name?: string | null })[]>('/admin/bots');
+      const [data, pnls] = await Promise.all([
+        apiFetch<(Bot & { owner_name?: string | null })[]>('/admin/bots'),
+        apiFetch<BotPnl[]>('/bots/pnl').catch(() => [] as BotPnl[]),
+      ]);
       setBots(data);
+      const m = new Map<string, BotPnl>();
+      for (const p of pnls) m.set(p.bot_name, p);
+      setBotPnlMap(m);
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Failed to load bots', 'error');
     }
@@ -462,7 +469,9 @@ export default function AdminPage() {
               </thead>
               <tbody>
                 {bots.map((bot) => {
-                  const pnl = bot.balance - bot.initial_balance;
+                  const bp = botPnlMap.get(bot.bot_name);
+                  const equity = bp?.current_balance ?? bot.balance;
+                  const pnl = bp?.realized_pnl ?? (equity - bot.initial_balance);
                   const isActive = bot.is_active !== false;
                   return (
                     <tr key={bot.id} className="border-b border-[#111122] hover:bg-white/[.02] transition-colors">
@@ -473,7 +482,7 @@ export default function AdminPage() {
                         ${bot.initial_balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td className="px-5 py-3 text-right text-slate-200 font-medium">
-                        ${bot.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        ${equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td className={`px-5 py-3 text-right font-medium ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {pnl >= 0 ? '+' : ''}{pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}

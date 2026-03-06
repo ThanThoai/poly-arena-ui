@@ -16,6 +16,7 @@ export interface PositionsSettings {
   tfFilter?: string;
   typeFilter?: string;
   forecastFilter?: string;
+  viewMode?: 'table' | 'group';
 }
 
 export interface TradeHistorySettings {

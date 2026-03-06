@@ -541,7 +541,7 @@ export default function FutureMarketPage({ trades, bots, botPnls, balanceHistory
       <FuturesPriceTicker prices={prices} />
 
       {/* Shared leaderboard */}
-      <KpiCards trades={trades} bots={bots} />
+      <KpiCards trades={trades} bots={bots} botPnls={botPnls} />
 
       {/* Shared balance chart */}
       <BalanceChart

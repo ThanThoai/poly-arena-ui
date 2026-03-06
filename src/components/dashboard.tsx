@@ -104,7 +104,7 @@ export default function Dashboard() {
         />
       ) : (
         <main className="max-w-[1900px] mx-auto px-5 py-5 space-y-5">
-          <KpiCards trades={trades} bots={bots} />
+          <KpiCards trades={trades} bots={bots} botPnls={data?.botPnls ?? []} />
 
           <BalanceChart
             bots={bots}

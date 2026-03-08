@@ -182,7 +182,17 @@ export default function BalanceChart({
 
   const intervalMs = BALANCE_TF_MS[balanceTf] ?? BALANCE_TF_MS.H1;
   const tEnd = Date.now();
-  const windowStart = tEnd - (TF_WINDOW[balanceTf] ?? TF_WINDOW.H1);
+
+  const earliestRecord = useMemo(() => {
+    let earliest = Infinity;
+    for (const bh of balanceHistory) {
+      const ts = bh.recorded_at ? parseUTC(bh.recorded_at)?.getTime() : null;
+      if (ts && ts < earliest) earliest = ts;
+    }
+    return earliest === Infinity ? tEnd : earliest;
+  }, [balanceHistory]);
+
+  const windowStart = earliestRecord;
 
   // ── Bot filter ────────────────────────────────────────────────────────
   const allBotNames = useMemo(() => botPnls.map((bp) => bp.bot_name).sort(), [botPnls]);
@@ -196,7 +206,7 @@ export default function BalanceChart({
 
   // ── Shared binning logic ──────────────────────────────────────────────
   const botBinnedData = useMemo(() => {
-    const result = new Map<string, { data: { x: number; y: number }[]; initBal: number; lastBalance: number }>();
+    const result = new Map<string, { data: { x: number; y: number }[]; changeIdx: Set<number>; initBal: number; lastBalance: number }>();
 
     for (const botName of visibleBots) {
       const bot = bots.find((b) => b.bot_name === botName);
@@ -213,15 +223,10 @@ export default function BalanceChart({
       events.sort((a, b) => a.ts - b.ts);
 
       let lastBefore = initBal;
-      let startIdx = 0;
-      for (let i = 0; i < events.length; i++) {
-        if (events[i].ts < windowStart) { lastBefore = events[i].balance; startIdx = i + 1; }
-        else break;
-      }
 
       const tStart = Math.floor(windowStart / intervalMs) * intervalMs;
       const data: { x: number; y: number }[] = [];
-      let histIdx = startIdx;
+      let histIdx = 0;
 
       for (let t = tStart; t <= tEnd; t += intervalMs) {
         while (histIdx < events.length && events[histIdx].ts <= t) {
@@ -240,7 +245,12 @@ export default function BalanceChart({
         data.push({ x: tEnd, y: initBal });
       }
 
-      result.set(botName, { data, initBal, lastBalance: lastBefore });
+      const changeIdx = new Set<number>();
+      for (let i = 1; i < data.length; i++) {
+        if (Math.abs(data[i].y - data[i - 1].y) > 0.005) changeIdx.add(i);
+      }
+
+      result.set(botName, { data, changeIdx, initBal, lastBalance: lastBefore });
     }
     return result;
   }, [visibleBots, bots, balanceHistory, intervalMs, windowStart, tEnd]);
@@ -250,7 +260,7 @@ export default function BalanceChart({
     const ds = visibleBots.map((botName, idx) => {
       const binned = botBinnedData.get(botName);
       if (!binned) return null;
-      const { data: rawData, initBal } = binned;
+      const { data: rawData, changeIdx, initBal } = binned;
       const color = BOT_PALETTE[idx % BOT_PALETTE.length];
       const bp = botPnlMap.get(botName);
 
@@ -262,13 +272,19 @@ export default function BalanceChart({
         borderColor: color,
         backgroundColor: color + '33',
         borderWidth: 1.5,
-        tension: 0.3,
+        tension: 0,
         fill: false,
         initBalance: initBal,
         realizedPnl: bp?.realized_pnl ?? 0,
-        pointRadius: data.map((_: any, i: number) => (i === 0 || i === lastIdx) ? 5 : 0),
-        pointHoverRadius: 7,
-        pointBackgroundColor: color,
+        pointRadius: data.map((_: any, i: number) =>
+          i === 0 || i === lastIdx ? 7 : changeIdx.has(i) ? 4 : 0
+        ),
+        pointHoverRadius: 9,
+        pointBackgroundColor: data.map((_: any, i: number) => {
+          if (!changeIdx.has(i)) return color;
+          const prev = i > 0 ? data[i - 1].y : initBal;
+          return data[i].y >= prev ? '#34d399' : '#fb7185';
+        }),
         pointBorderColor: '#07070d',
         pointBorderWidth: 1.5,
       };
@@ -340,7 +356,13 @@ export default function BalanceChart({
         ticks: {
           maxTicksLimit: 8,
           font: { size: 10 },
-          callback: (v) => (v ? new Date(v as number).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''),
+          callback: (v) => {
+            if (!v) return '';
+            const d = new Date(v as number);
+            if (balanceTf === 'M5') return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+            if (balanceTf === 'M15') return d.toLocaleString(undefined, { day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+          },
         },
       },
       y: {

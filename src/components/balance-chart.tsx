@@ -221,6 +221,9 @@ export default function BalanceChart({
         events.push({ ts, balance: bh.balance });
       }
       events.sort((a, b) => a.ts - b.ts);
+      if (events.length > 100) {
+        events.splice(0, events.length - 100);
+      }
 
       let lastBefore = initBal;
 

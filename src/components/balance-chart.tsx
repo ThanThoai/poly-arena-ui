@@ -180,7 +180,6 @@ export default function BalanceChart({
     onSettingsChange?.({ timeframe: tf, selectedBots: [] });
   };
 
-  const intervalMs = BALANCE_TF_MS[balanceTf] ?? BALANCE_TF_MS.H1;
   const tEnd = Date.now();
 
   // ── Bot filter ────────────────────────────────────────────────────────
@@ -193,7 +192,7 @@ export default function BalanceChart({
     setBotFilter(nf.size === 0 ? new Set() : nf);
   };
 
-  // ── Shared binning logic ──────────────────────────────────────────────
+  // ── Build per-bot data from actual records (no fixed-interval binning) ──
   const botBinnedData = useMemo(() => {
     const MAX_EVENTS = 100;
     const result = new Map<string, { data: { x: number; y: number }[]; changeIdx: Set<number>; initBal: number; lastBalance: number }>();
@@ -215,39 +214,21 @@ export default function BalanceChart({
         events.splice(0, events.length - MAX_EVENTS);
       }
 
-      // Each bot starts from its own first record
-      const botEarliest = events.length > 0 ? events[0].ts : tEnd;
-      const tStart = Math.floor(botEarliest / intervalMs) * intervalMs;
+      // Use actual event timestamps directly — only API data, no synthetic points
+      const data: { x: number; y: number }[] = events.map((ev) => ({ x: ev.ts, y: ev.balance }));
+      if (!data.length) continue;
 
-      let lastBefore = initBal;
-      const data: { x: number; y: number }[] = [];
-      let histIdx = 0;
-
-      for (let t = tStart; t <= tEnd; t += intervalMs) {
-        while (histIdx < events.length && events[histIdx].ts <= t) {
-          lastBefore = events[histIdx].balance;
-          histIdx++;
-        }
-        data.push({ x: t, y: lastBefore });
-      }
-      while (histIdx < events.length) { lastBefore = events[histIdx].balance; histIdx++; }
-      if (data.length && data[data.length - 1].x < tEnd) {
-        data.push({ x: tEnd, y: lastBefore });
-      }
-      if (!data.length) {
-        data.push({ x: tStart, y: initBal });
-        data.push({ x: tEnd, y: initBal });
-      }
+      const lastBalance = data[data.length - 1].y;
 
       const changeIdx = new Set<number>();
       for (let i = 1; i < data.length; i++) {
         if (Math.abs(data[i].y - data[i - 1].y) > 0.005) changeIdx.add(i);
       }
 
-      result.set(botName, { data, changeIdx, initBal, lastBalance: lastBefore });
+      result.set(botName, { data, changeIdx, initBal, lastBalance });
     }
     return result;
-  }, [visibleBots, bots, balanceHistory, intervalMs, tEnd]);
+  }, [visibleBots, bots, balanceHistory, tEnd]);
 
   // ── Bot Balance datasets ──────────────────────────────────────────────
   const botBalanceDatasets = useMemo(() => {
@@ -347,15 +328,30 @@ export default function BalanceChart({
       x: {
         type: 'linear',
         grid: { color: '#12121e' },
+        afterBuildTicks: (axis) => {
+          // Replace auto-generated ticks with actual data timestamps
+          const allTs = new Set<number>();
+          for (const ds of activeDatasets) {
+            for (const pt of ds.data as { x: number }[]) allTs.add(pt.x);
+          }
+          const sorted = [...allTs].sort((a, b) => a - b);
+          // Thin to max ~10 ticks evenly spaced
+          const maxTicks = 10;
+          if (sorted.length <= maxTicks) {
+            axis.ticks = sorted.map((v) => ({ value: v }));
+          } else {
+            const step = (sorted.length - 1) / (maxTicks - 1);
+            axis.ticks = Array.from({ length: maxTicks }, (_, i) => ({
+              value: sorted[Math.round(i * step)],
+            }));
+          }
+        },
         ticks: {
-          maxTicksLimit: 8,
           font: { size: 10 },
           callback: (v) => {
             if (!v) return '';
             const d = new Date(v as number);
-            if (balanceTf === 'M5') return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-            if (balanceTf === 'M15') return d.toLocaleString(undefined, { day: 'numeric', hour: '2-digit', minute: '2-digit' });
-            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
           },
         },
       },

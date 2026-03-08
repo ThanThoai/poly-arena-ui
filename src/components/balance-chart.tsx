@@ -198,10 +198,6 @@ export default function BalanceChart({
     const MAX_EVENTS = 100;
     const result = new Map<string, { data: { x: number; y: number }[]; changeIdx: Set<number>; initBal: number; lastBalance: number }>();
 
-    // Pass 1: collect & trim events per bot, find global earliest
-    const botEvents = new Map<string, { events: { ts: number; balance: number }[]; initBal: number }>();
-    let globalEarliest = tEnd;
-
     for (const botName of visibleBots) {
       const bot = bots.find((b) => b.bot_name === botName);
       const initBal = bot?.initial_balance ?? 0;
@@ -219,17 +215,10 @@ export default function BalanceChart({
         events.splice(0, events.length - MAX_EVENTS);
       }
 
-      if (events.length > 0 && events[0].ts < globalEarliest) {
-        globalEarliest = events[0].ts;
-      }
+      // Each bot starts from its own first record
+      const botEarliest = events.length > 0 ? events[0].ts : tEnd;
+      const tStart = Math.floor(botEarliest / intervalMs) * intervalMs;
 
-      botEvents.set(botName, { events, initBal });
-    }
-
-    // Pass 2: bin all bots from shared global earliest
-    const tStart = Math.floor(globalEarliest / intervalMs) * intervalMs;
-
-    for (const [botName, { events, initBal }] of botEvents) {
       let lastBefore = initBal;
       const data: { x: number; y: number }[] = [];
       let histIdx = 0;

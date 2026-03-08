@@ -183,17 +183,6 @@ export default function BalanceChart({
   const intervalMs = BALANCE_TF_MS[balanceTf] ?? BALANCE_TF_MS.H1;
   const tEnd = Date.now();
 
-  const earliestRecord = useMemo(() => {
-    let earliest = Infinity;
-    for (const bh of balanceHistory) {
-      const ts = bh.recorded_at ? parseUTC(bh.recorded_at)?.getTime() : null;
-      if (ts && ts < earliest) earliest = ts;
-    }
-    return earliest === Infinity ? tEnd : earliest;
-  }, [balanceHistory]);
-
-  const windowStart = earliestRecord;
-
   // ── Bot filter ────────────────────────────────────────────────────────
   const allBotNames = useMemo(() => botPnls.map((bp) => bp.bot_name).sort(), [botPnls]);
   const visibleBots = botFilter.size > 0 ? allBotNames.filter((b) => botFilter.has(b)) : allBotNames;
@@ -206,7 +195,12 @@ export default function BalanceChart({
 
   // ── Shared binning logic ──────────────────────────────────────────────
   const botBinnedData = useMemo(() => {
+    const MAX_EVENTS = 100;
     const result = new Map<string, { data: { x: number; y: number }[]; changeIdx: Set<number>; initBal: number; lastBalance: number }>();
+
+    // Pass 1: collect & trim events per bot, find global earliest
+    const botEvents = new Map<string, { events: { ts: number; balance: number }[]; initBal: number }>();
+    let globalEarliest = tEnd;
 
     for (const botName of visibleBots) {
       const bot = bots.find((b) => b.bot_name === botName);
@@ -221,13 +215,22 @@ export default function BalanceChart({
         events.push({ ts, balance: bh.balance });
       }
       events.sort((a, b) => a.ts - b.ts);
-      if (events.length > 100) {
-        events.splice(0, events.length - 100);
+      if (events.length > MAX_EVENTS) {
+        events.splice(0, events.length - MAX_EVENTS);
       }
 
-      let lastBefore = initBal;
+      if (events.length > 0 && events[0].ts < globalEarliest) {
+        globalEarliest = events[0].ts;
+      }
 
-      const tStart = Math.floor(windowStart / intervalMs) * intervalMs;
+      botEvents.set(botName, { events, initBal });
+    }
+
+    // Pass 2: bin all bots from shared global earliest
+    const tStart = Math.floor(globalEarliest / intervalMs) * intervalMs;
+
+    for (const [botName, { events, initBal }] of botEvents) {
+      let lastBefore = initBal;
       const data: { x: number; y: number }[] = [];
       let histIdx = 0;
 
@@ -243,8 +246,7 @@ export default function BalanceChart({
         data.push({ x: tEnd, y: lastBefore });
       }
       if (!data.length) {
-        const tStart2 = Math.floor(windowStart / intervalMs) * intervalMs;
-        data.push({ x: tStart2, y: initBal });
+        data.push({ x: tStart, y: initBal });
         data.push({ x: tEnd, y: initBal });
       }
 
@@ -256,7 +258,7 @@ export default function BalanceChart({
       result.set(botName, { data, changeIdx, initBal, lastBalance: lastBefore });
     }
     return result;
-  }, [visibleBots, bots, balanceHistory, intervalMs, windowStart, tEnd]);
+  }, [visibleBots, bots, balanceHistory, intervalMs, tEnd]);
 
   // ── Bot Balance datasets ──────────────────────────────────────────────
   const botBalanceDatasets = useMemo(() => {

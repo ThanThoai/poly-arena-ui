@@ -173,10 +173,9 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
     for (const bot of myBots) {
       const bp = botPnls.get(bot.bot_name);
       const equity = bp?.current_balance ?? bot.balance;
-      const pnl = bp?.realized_pnl ?? (equity - bot.initial_balance);
       totalInitial += bot.initial_balance;
       totalEquity += equity;
-      totalPnl += pnl;
+      totalPnl += equity - bot.initial_balance;
       totalFees += bp?.total_fees ?? 0;
       if (bot.status === 'ACTIVE') activeCount++;
       else if (bot.status === 'PAUSED') pausedCount++;
@@ -232,9 +231,9 @@ export default function BotManagerPage({ onCreateBot, onRefresh, refreshKey }: B
                 {myBots.map((bot) => {
                   const bp = botPnls.get(bot.bot_name);
                   const equity = bp?.current_balance ?? bot.balance;
-                  const pnl = bp?.realized_pnl ?? (equity - bot.initial_balance);
+                  const pnl = equity - bot.initial_balance;
                   const fees = bp?.total_fees ?? 0;
-                  const roi = bp?.realized_pnl_pct ?? (bot.initial_balance > 0 ? (pnl / bot.initial_balance) * 100 : 0);
+                  const roi = bot.initial_balance > 0 ? (pnl / bot.initial_balance) * 100 : 0;
                   const isRenaming = renamingId === bot.id;
                   return (
                     <tr key={bot.id} className="border-b border-[#111122] hover:bg-white/[.02] transition-colors">

@@ -87,7 +87,7 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
     const wins = st.filter((t) => t.result === 'WIN').length;
     const losses = st.filter((t) => t.result === 'LOSS').length;
     const pend = st.filter((t) => t.result === 'PENDING').length;
-    const profit = st.reduce((s, t) => s + (t.profit || 0), 0);
+    const profit = st.reduce((s, t) => s + (t.profit || 0) - (t.entry_fee || 0), 0);
     return { symbol: symbolFilter, total: st.length, wins, losses, pending: pend, profit };
   }, [trades, symbolFilter]);
 
@@ -97,7 +97,7 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
   const filteredStats = useMemo(() => {
     const wins = filtered.filter((t) => t.result === 'WIN').length;
     const losses = filtered.filter((t) => t.result === 'LOSS').length;
-    const totalProfit = filtered.reduce((s, t) => s + (t.profit ?? 0), 0);
+    const totalProfit = filtered.reduce((s, t) => s + (t.profit ?? 0) - (t.entry_fee ?? 0), 0);
     const totalAmount = filtered.reduce((s, t) => s + t.amount, 0);
     const totalFees = filtered.reduce((s, t) => s + (t.entry_fee ?? 0), 0);
     return { wins, losses, totalProfit, totalAmount, totalFees };

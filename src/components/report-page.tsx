@@ -74,7 +74,7 @@ function computeBotStats(settled: Trade[]): BotStats {
   const cancelled = settled.filter((t) => t.result === 'CANCELLED').length;
   const total = settled.length;
   const wr = total - cancelled > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '—';
-  const pnl = settled.reduce((s, t) => s + (t.profit || 0), 0);
+  const pnl = settled.reduce((s, t) => s + (t.profit || 0) - (t.entry_fee || 0), 0);
   const avg = wins + losses > 0 ? pnl / (wins + losses) : 0;
   const wlRatio = losses > 0 ? (wins / losses).toFixed(2) : wins > 0 ? '∞' : '—';
   return { wins, losses, cancelled, total, wr, pnl, avg, wlRatio };
@@ -126,7 +126,7 @@ function computeByTimeframe(settled: Trade[]): TfRow[] {
     const w = sub.filter((t) => t.result === 'WIN').length;
     const l = sub.filter((t) => t.result === 'LOSS').length;
     const tot = w + l;
-    const p = sub.reduce((s, t) => s + (t.profit || 0), 0);
+    const p = sub.reduce((s, t) => s + (t.profit || 0) - (t.entry_fee || 0), 0);
     return { tf, wins: w, losses: l, total: tot, pnl: p, wr: tot > 0 ? ((w / tot) * 100).toFixed(1) + '%' : '—' };
   });
 }
@@ -155,9 +155,9 @@ function computeByMarketSession(allTrades: Trade[]): MarketSessionRow[] {
     const candleKey = t.candle_open ?? 0;
     const existing = groupMap[groupKey].get(candleKey);
     if (!existing) {
-      groupMap[groupKey].set(candleKey, { result: t.result!, pnl: t.profit || 0, count: 1 });
+      groupMap[groupKey].set(candleKey, { result: t.result!, pnl: (t.profit || 0) - (t.entry_fee || 0), count: 1 });
     } else {
-      existing.pnl += t.profit || 0;
+      existing.pnl += (t.profit || 0) - (t.entry_fee || 0);
       existing.count++;
     }
   }
@@ -564,8 +564,22 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
   );
   const settled = useMemo(() => botTrades.filter((t) => t.result !== 'PENDING'), [botTrades]);
 
-  // KPIs (single-bot mode)
-  const stats = useMemo(() => computeBotStats(settled), [settled]);
+  // KPIs (single-bot mode) — P&L based on current_balance - initial_balance
+  const stats = useMemo(() => {
+    const base = computeBotStats(settled);
+    // Override P&L: use balance-based calculation
+    const targetBots = selectedBot ? bots.filter((b) => b.bot_name === selectedBot) : bots;
+    const pnlMap = new Map<string, BotPnl>();
+    for (const p of botPnls) pnlMap.set(p.bot_name, p);
+    let totalPnl = 0;
+    for (const bot of targetBots) {
+      const bp = pnlMap.get(bot.bot_name);
+      const equity = bp?.current_balance ?? bot.balance;
+      totalPnl += equity - bot.initial_balance;
+    }
+    const decided = base.wins + base.losses;
+    return { ...base, pnl: totalPnl, avg: decided > 0 ? totalPnl / decided : 0 };
+  }, [settled, bots, botPnls, selectedBot]);
 
   // By Day
   const byDay = useMemo(() => computeByDay(settled), [settled]);
@@ -996,6 +1010,10 @@ function BotSummaryTable({ trades, bots, botNames, botPnls = [], balanceHistoryG
       const bp = pnlMap.get(name);
       const ledger = ledgerByBot.get(name);
 
+      const equity = bp?.current_balance ?? bot?.balance ?? initial;
+      const pnl = equity - initial;
+      const roi = initial > 0 ? (pnl / initial) * 100 : 0;
+
       // Use ledger/pnl data if available, fallback to trades
       if (bp && ledger) {
         const wins = bp.wins;
@@ -1004,10 +1022,8 @@ function BotSummaryTable({ trades, bots, botNames, botPnls = [], balanceHistoryG
         const cancelled = ledger.trades - decided;
         const total = ledger.trades;
         const wr = decided > 0 ? (wins / decided) * 100 : 0;
-        const pnl = bp.realized_pnl;
         const fees = bp.total_fees;
         const avg = decided > 0 ? pnl / decided : 0;
-        const roi = initial > 0 ? (pnl / initial) * 100 : 0;
         return { name, color, wins, losses, cancelled: Math.max(0, cancelled), total, decided, wr, pnl, fees, avg, initial, roi, sessions: ledger.sessions };
       }
 
@@ -1019,10 +1035,8 @@ function BotSummaryTable({ trades, bots, botNames, botPnls = [], balanceHistoryG
       const total = botSettled.length;
       const decided = wins + losses;
       const wr = decided > 0 ? (wins / decided) * 100 : 0;
-      const pnl = botSettled.reduce((s, t) => s + (t.profit || 0), 0);
       const fees = botSettled.reduce((s, t) => s + (t.entry_fee || 0), 0);
       const avg = decided > 0 ? pnl / decided : 0;
-      const roi = initial > 0 ? (pnl / initial) * 100 : 0;
       return { name, color, wins, losses, cancelled, total, decided, wr, pnl, fees, avg, initial, roi, sessions: 0 };
     }).filter((r) => r.total > 0);
   }, [trades, bots, botNames, pnlMap, ledgerByBot]);

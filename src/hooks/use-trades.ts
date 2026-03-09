@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { apiFetch, Trade, Bot, BotPnl, BalanceHistory, SchedulerStatus, PriceEntry, OrderbookEntry, AchievementDef, BotAchievement } from '@/lib/api';
+import { apiFetch, Trade, Bot, BotPnl, BalanceHistory, BalanceHistoryGrouped, SchedulerStatus, PriceEntry, OrderbookEntry, AchievementDef, BotAchievement } from '@/lib/api';
 
 export interface DashboardData {
   trades: Trade[];
   bots: Bot[];
   botPnls: BotPnl[];
   balanceHistory: BalanceHistory[];
+  balanceHistoryGrouped: BalanceHistoryGrouped[];
   schedulerStatus: SchedulerStatus;
   achievementDefs: AchievementDef[];
   botAchievements: Record<number, BotAchievement[]>;
@@ -21,16 +22,28 @@ export function useDashboardData(intervalMs = 30_000) {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [trades, bots, botPnls, balanceHistory, schedulerStatus, achievementDefs, botAchievements] = await Promise.all([
+      const [trades, bots, botPnls, balanceHistoryGrouped, schedulerStatus, achievementDefs, botAchievements] = await Promise.all([
         apiFetch<Trade[]>('/binary-options?limit=500'),
         apiFetch<Bot[]>('/bots'),
         apiFetch<BotPnl[]>('/bots/pnl').catch(() => [] as BotPnl[]),
-        apiFetch<BalanceHistory[]>('/bots/balance-history'),
+        apiFetch<BalanceHistoryGrouped[]>('/bots/balance-history').catch(() => [] as BalanceHistoryGrouped[]),
         apiFetch<SchedulerStatus>('/dashboard/scheduler/status'),
         apiFetch<AchievementDef[]>('/achievements/').catch(() => [] as AchievementDef[]),
         apiFetch<Record<number, BotAchievement[]>>('/achievements/all-bots').catch(() => ({} as Record<number, BotAchievement[]>)),
       ]);
-      setData({ trades, bots, botPnls, balanceHistory, schedulerStatus, achievementDefs, botAchievements });
+      // Flatten grouped data to legacy BalanceHistory[] for backward compat
+      const balanceHistory: BalanceHistory[] = [];
+      for (const group of balanceHistoryGrouped) {
+        for (const entry of group.bots) {
+          balanceHistory.push({
+            id: 0,
+            bot_name: entry.bot_name,
+            balance: entry.new_balance,
+            recorded_at: group.settled_at,
+          });
+        }
+      }
+      setData({ trades, bots, botPnls, balanceHistory, balanceHistoryGrouped, schedulerStatus, achievementDefs, botAchievements });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error');

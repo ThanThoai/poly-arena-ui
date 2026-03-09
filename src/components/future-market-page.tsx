@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react';
-import { Trade, Bot, BotPnl, BalanceHistory, apiFetch } from '@/lib/api';
+import { Trade, Bot, BotPnl, BalanceHistory, BalanceHistoryGrouped, apiFetch } from '@/lib/api';
 import { money, pnlCls } from '@/lib/helpers';
 import KpiCards from '@/components/kpi-cards';
 import BalanceChart from '@/components/balance-chart';
@@ -528,9 +528,10 @@ interface FutureMarketPageProps {
   bots: Bot[];
   botPnls: BotPnl[];
   balanceHistory: BalanceHistory[];
+  balanceHistoryGrouped?: BalanceHistoryGrouped[];
 }
 
-export default function FutureMarketPage({ trades, bots, botPnls, balanceHistory }: FutureMarketPageProps) {
+export default function FutureMarketPage({ trades, bots, botPnls, balanceHistory, balanceHistoryGrouped = [] }: FutureMarketPageProps) {
   const prices = useFuturePrices(3_000);
   const { positions, closedTrades, loading } = useFutureData(10_000);
   const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
@@ -541,13 +542,14 @@ export default function FutureMarketPage({ trades, bots, botPnls, balanceHistory
       <FuturesPriceTicker prices={prices} />
 
       {/* Shared leaderboard */}
-      <KpiCards trades={trades} bots={bots} botPnls={botPnls} />
+      <KpiCards trades={trades} bots={bots} botPnls={botPnls} balanceHistoryGrouped={balanceHistoryGrouped} />
 
       {/* Shared balance chart */}
       <BalanceChart
         bots={bots}
         botPnls={botPnls}
         balanceHistory={balanceHistory}
+        balanceHistoryGrouped={balanceHistoryGrouped}
         trades={trades}
       />
 

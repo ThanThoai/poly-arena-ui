@@ -14,8 +14,8 @@ import {
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import type { ChartOptions, Plugin } from 'chart.js';
-import { Bot, BotPnl, BalanceHistory, Trade } from '@/lib/api';
-import { BOT_PALETTE, BALANCE_TF_MS, TF_WINDOW, compact, parseUTC, pnlCls } from '@/lib/helpers';
+import { Bot, BotPnl, BalanceHistory, BalanceHistoryGrouped, Trade } from '@/lib/api';
+import { BOT_PALETTE, compact, parseUTC, pnlCls } from '@/lib/helpers';
 import type { BalanceChartSettings } from '@/lib/settings-types';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
@@ -24,6 +24,7 @@ interface BalanceChartProps {
   bots: Bot[];
   botPnls: BotPnl[];
   balanceHistory: BalanceHistory[];
+  balanceHistoryGrouped: BalanceHistoryGrouped[];
   trades: Trade[];
   initialSettings?: BalanceChartSettings;
   onSettingsChange?: (s: BalanceChartSettings) => void;
@@ -163,7 +164,7 @@ const crosshairPlugin: Plugin<'line'> = {
 };
 
 export default function BalanceChart({
-  bots, botPnls, balanceHistory, trades,
+  bots, botPnls, balanceHistory, balanceHistoryGrouped, trades,
   initialSettings, onSettingsChange,
 }: BalanceChartProps) {
   const [balanceTf, setBalanceTf] = useState(initialSettings?.timeframe ?? 'M5');
@@ -192,43 +193,76 @@ export default function BalanceChart({
     setBotFilter(nf.size === 0 ? new Set() : nf);
   };
 
-  // ── Build per-bot data from actual records (no fixed-interval binning) ──
+  // ── Build per-bot data from grouped settlement ledger ──
   const botBinnedData = useMemo(() => {
     const MAX_EVENTS = 100;
     const result = new Map<string, { data: { x: number; y: number }[]; changeIdx: Set<number>; initBal: number; lastBalance: number }>();
 
-    for (const botName of visibleBots) {
-      const bot = bots.find((b) => b.bot_name === botName);
-      const initBal = bot?.initial_balance ?? 0;
-      if (!initBal) continue;
+    // Use grouped data (settlement ledger) as primary source
+    if (balanceHistoryGrouped.length > 0) {
+      // Build per-bot timeline from grouped entries
+      const botTimeline = new Map<string, { ts: number; balance: number }[]>();
 
-      const events: { ts: number; balance: number }[] = [];
-      for (const bh of balanceHistory) {
-        if (bh.bot_name !== botName) continue;
-        const ts = bh.recorded_at ? parseUTC(bh.recorded_at)?.getTime() : null;
+      for (const group of balanceHistoryGrouped) {
+        const ts = parseUTC(group.settled_at)?.getTime();
         if (!ts) continue;
-        events.push({ ts, balance: bh.balance });
-      }
-      events.sort((a, b) => a.ts - b.ts);
-      if (events.length > MAX_EVENTS) {
-        events.splice(0, events.length - MAX_EVENTS);
-      }
-
-      // Use actual event timestamps directly — only API data, no synthetic points
-      const data: { x: number; y: number }[] = events.map((ev) => ({ x: ev.ts, y: ev.balance }));
-      if (!data.length) continue;
-
-      const lastBalance = data[data.length - 1].y;
-
-      const changeIdx = new Set<number>();
-      for (let i = 1; i < data.length; i++) {
-        if (Math.abs(data[i].y - data[i - 1].y) > 0.005) changeIdx.add(i);
+        for (const entry of group.bots) {
+          if (!botTimeline.has(entry.bot_name)) botTimeline.set(entry.bot_name, []);
+          botTimeline.get(entry.bot_name)!.push({ ts, balance: entry.new_balance });
+        }
       }
 
-      result.set(botName, { data, changeIdx, initBal, lastBalance });
+      for (const botName of visibleBots) {
+        const bot = bots.find((b) => b.bot_name === botName);
+        const initBal = bot?.initial_balance ?? 0;
+        if (!initBal) continue;
+
+        const events = botTimeline.get(botName) ?? [];
+        events.sort((a, b) => a.ts - b.ts);
+        if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
+
+        const data = events.map((ev) => ({ x: ev.ts, y: ev.balance }));
+        if (!data.length) continue;
+
+        const lastBalance = data[data.length - 1].y;
+        const changeIdx = new Set<number>();
+        for (let i = 1; i < data.length; i++) {
+          if (Math.abs(data[i].y - data[i - 1].y) > 0.005) changeIdx.add(i);
+        }
+
+        result.set(botName, { data, changeIdx, initBal, lastBalance });
+      }
+    } else {
+      // Fallback to legacy flat balanceHistory
+      for (const botName of visibleBots) {
+        const bot = bots.find((b) => b.bot_name === botName);
+        const initBal = bot?.initial_balance ?? 0;
+        if (!initBal) continue;
+
+        const events: { ts: number; balance: number }[] = [];
+        for (const bh of balanceHistory) {
+          if (bh.bot_name !== botName) continue;
+          const ts = bh.recorded_at ? parseUTC(bh.recorded_at)?.getTime() : null;
+          if (!ts) continue;
+          events.push({ ts, balance: bh.balance });
+        }
+        events.sort((a, b) => a.ts - b.ts);
+        if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
+
+        const data = events.map((ev) => ({ x: ev.ts, y: ev.balance }));
+        if (!data.length) continue;
+
+        const lastBalance = data[data.length - 1].y;
+        const changeIdx = new Set<number>();
+        for (let i = 1; i < data.length; i++) {
+          if (Math.abs(data[i].y - data[i - 1].y) > 0.005) changeIdx.add(i);
+        }
+
+        result.set(botName, { data, changeIdx, initBal, lastBalance });
+      }
     }
     return result;
-  }, [visibleBots, bots, balanceHistory, tEnd]);
+  }, [visibleBots, bots, balanceHistory, balanceHistoryGrouped, tEnd]);
 
   // ── Bot Balance datasets ──────────────────────────────────────────────
   const botBalanceDatasets = useMemo(() => {
@@ -285,6 +319,53 @@ export default function BalanceChart({
     return { min: yMin - padding, max: yMax + padding };
   }, [activeDatasets]);
 
+  // ── Build per-point metadata for rich tooltips ──
+  const pointMeta = useMemo(() => {
+    // Map: botName -> index -> { delta, session_result, session_id, ... }
+    const meta = new Map<string, Map<number, { delta: number; session_result: string | null; session_id: string | null; total_profit: number; total_fee: number; trade_count: number | null; win_count: number | null; loss_count: number | null }>>();
+
+    if (balanceHistoryGrouped.length > 0) {
+      // Build per-bot ordered events matching the chart data
+      const botEvents = new Map<string, { ts: number; entry: typeof balanceHistoryGrouped[0]['bots'][0] }[]>();
+      for (const group of balanceHistoryGrouped) {
+        const ts = parseUTC(group.settled_at)?.getTime();
+        if (!ts) continue;
+        for (const entry of group.bots) {
+          if (!botEvents.has(entry.bot_name)) botEvents.set(entry.bot_name, []);
+          botEvents.get(entry.bot_name)!.push({ ts, entry });
+        }
+      }
+
+      for (const [botName, events] of botEvents) {
+        events.sort((a, b) => a.ts - b.ts);
+        // Match MAX_EVENTS trim from chart data
+        const MAX_EVENTS = 100;
+        if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
+
+        const idxMap = new Map<number, typeof events[0]['entry']>();
+        events.forEach((ev, i) => {
+          idxMap.set(i, ev.entry);
+        });
+
+        const botMeta = new Map<number, { delta: number; session_result: string | null; session_id: string | null; total_profit: number; total_fee: number; trade_count: number | null; win_count: number | null; loss_count: number | null }>();
+        for (const [i, entry] of idxMap) {
+          botMeta.set(i, {
+            delta: entry.delta,
+            session_result: entry.session_result,
+            session_id: entry.session_id,
+            total_profit: entry.total_profit,
+            total_fee: entry.total_fee,
+            trade_count: entry.trade_count,
+            win_count: entry.win_count,
+            loss_count: entry.loss_count,
+          });
+        }
+        meta.set(botName, botMeta);
+      }
+    }
+    return meta;
+  }, [balanceHistoryGrouped]);
+
   const options: ChartOptions<'line'> = {
     responsive: true,
     maintainAspectRatio: false,
@@ -310,16 +391,31 @@ export default function BalanceChart({
           },
           label: (c) => {
             const ds = activeDatasets[c.datasetIndex] as any;
+            const botName = ds?.label ?? '';
             const val = c.parsed.y ?? 0;
             const init = ds?.initBalance;
-            const realPnl = ds?.realizedPnl;
             const formatted = '$' + Number(val).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+            // Try to get rich session data from pointMeta
+            const botMeta = pointMeta.get(botName);
+            const pm = botMeta?.get(c.dataIndex);
+
+            if (pm) {
+              const deltaSign = pm.delta >= 0 ? '+' : '';
+              const resultTag = pm.session_result ? ` [${pm.session_result}]` : '';
+              const sessionTag = pm.session_id ? ` ${pm.session_id}` : '';
+              const tradeInfo = pm.trade_count ? ` (${pm.win_count ?? 0}W/${pm.loss_count ?? 0}L)` : '';
+              return ` ${botName}: ${formatted} ${deltaSign}$${pm.delta.toFixed(2)}${resultTag}${tradeInfo}${sessionTag}`;
+            }
+
+            // Fallback
+            const realPnl = ds?.realizedPnl;
             if (init && init > 0 && realPnl !== undefined) {
               const pctVal = (realPnl / init) * 100;
               const sign = realPnl >= 0 ? '+' : '';
-              return ` ${c.dataset.label}: ${formatted} (${sign}$${Math.abs(realPnl).toFixed(2)} / ${sign}${pctVal.toFixed(1)}%)`;
+              return ` ${botName}: ${formatted} (${sign}$${Math.abs(realPnl).toFixed(2)} / ${sign}${pctVal.toFixed(1)}%)`;
             }
-            return ` ${c.dataset.label}: ${formatted}`;
+            return ` ${botName}: ${formatted}`;
           },
         },
       },
@@ -329,13 +425,11 @@ export default function BalanceChart({
         type: 'linear',
         grid: { color: '#12121e' },
         afterBuildTicks: (axis) => {
-          // Replace auto-generated ticks with actual data timestamps
           const allTs = new Set<number>();
           for (const ds of activeDatasets) {
             for (const pt of ds.data as { x: number }[]) allTs.add(pt.x);
           }
           const sorted = [...allTs].sort((a, b) => a - b);
-          // Thin to max ~10 ticks evenly spaced
           const maxTicks = 10;
           if (sorted.length <= maxTicks) {
             axis.ticks = sorted.map((v) => ({ value: v }));

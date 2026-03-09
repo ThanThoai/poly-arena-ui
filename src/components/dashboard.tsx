@@ -68,6 +68,7 @@ export default function Dashboard() {
   const trades = data?.trades ?? [];
   const bots = data?.bots ?? [];
   const balanceHistory = data?.balanceHistory ?? [];
+  const balanceHistoryGrouped = data?.balanceHistoryGrouped ?? [];
   const schedulerStatus = data?.schedulerStatus ?? null;
   const botAchievements = data?.botAchievements ?? {};
 
@@ -93,9 +94,10 @@ export default function Dashboard() {
           bots={bots}
           botPnls={data?.botPnls ?? []}
           balanceHistory={balanceHistory}
+          balanceHistoryGrouped={balanceHistoryGrouped}
         />
       ) : activeTab === 'report' ? (
-        <ReportPage trades={trades} bots={bots} botAchievements={botAchievements} />
+        <ReportPage trades={trades} bots={bots} botPnls={data?.botPnls ?? []} balanceHistoryGrouped={balanceHistoryGrouped} botAchievements={botAchievements} />
       ) : activeTab === 'bots' ? (
         <BotManagerPage
           onCreateBot={() => setShowCreateBot(true)}
@@ -104,12 +106,13 @@ export default function Dashboard() {
         />
       ) : (
         <main className="max-w-[1900px] mx-auto px-5 py-5 space-y-5">
-          <KpiCards trades={trades} bots={bots} botPnls={data?.botPnls ?? []} />
+          <KpiCards trades={trades} bots={bots} botPnls={data?.botPnls ?? []} balanceHistoryGrouped={balanceHistoryGrouped} />
 
           <BalanceChart
             bots={bots}
             botPnls={data?.botPnls ?? []}
             balanceHistory={balanceHistory}
+            balanceHistoryGrouped={balanceHistoryGrouped}
             trades={trades}
             initialSettings={settings.balanceChart}
             onSettingsChange={(s) => updateSettings({ balanceChart: s })}

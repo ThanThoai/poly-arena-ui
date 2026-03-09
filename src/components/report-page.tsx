@@ -12,7 +12,7 @@ import {
 } from 'chart.js';
 import { Radar } from 'react-chartjs-2';
 import type { ChartOptions } from 'chart.js';
-import { Trade, Bot, BotAchievement } from '@/lib/api';
+import { Trade, Bot, BotPnl, BalanceHistoryGrouped, BotAchievement } from '@/lib/api';
 import { BOT_PALETTE, money, pnlCls, parseUTC } from '@/lib/helpers';
 import CustomSelect from '@/components/ui/custom-select';
 import PositionsTable from '@/components/positions-table';
@@ -547,10 +547,12 @@ function AchievementShowcase({ achievements }: { achievements: BotAchievement[] 
 interface ReportPageProps {
   trades: Trade[];
   bots: Bot[];
+  botPnls?: BotPnl[];
+  balanceHistoryGrouped?: BalanceHistoryGrouped[];
   botAchievements?: Record<number, BotAchievement[]>;
 }
 
-export default function ReportPage({ trades, bots, botAchievements = {} }: ReportPageProps) {
+export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryGrouped = [], botAchievements = {} }: ReportPageProps) {
   const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
   const [selectedBot, setSelectedBot] = useState('');
   const [compareMode, setCompareMode] = useState(false);
@@ -756,7 +758,7 @@ export default function ReportPage({ trades, bots, botAchievements = {} }: Repor
 
           {/* Per-bot summary table (All Bots) */}
           {!selectedBot && bots.length > 1 && (
-            <BotSummaryTable trades={trades} bots={bots} botNames={botNames} />
+            <BotSummaryTable trades={trades} bots={bots} botNames={botNames} botPnls={botPnls} balanceHistoryGrouped={balanceHistoryGrouped} />
           )}
 
           {/* Achievements */}
@@ -958,9 +960,58 @@ export default function ReportPage({ trades, bots, botAchievements = {} }: Repor
   );
 }
 
-function BotSummaryTable({ trades, bots, botNames }: { trades: Trade[]; bots: Bot[]; botNames: string[] }) {
+function BotSummaryTable({ trades, bots, botNames, botPnls = [], balanceHistoryGrouped = [] }: { trades: Trade[]; bots: Bot[]; botNames: string[]; botPnls?: BotPnl[]; balanceHistoryGrouped?: BalanceHistoryGrouped[] }) {
+  const pnlMap = useMemo(() => {
+    const m = new Map<string, BotPnl>();
+    for (const p of botPnls) m.set(p.bot_name, p);
+    return m;
+  }, [botPnls]);
+
+  // Aggregate session stats from ledger per bot
+  const ledgerByBot = useMemo(() => {
+    const m = new Map<string, { wins: number; losses: number; sessions: number; totalProfit: number; totalFee: number; trades: number }>();
+    for (const group of balanceHistoryGrouped) {
+      for (const entry of group.bots) {
+        let agg = m.get(entry.bot_name);
+        if (!agg) {
+          agg = { wins: 0, losses: 0, sessions: 0, totalProfit: 0, totalFee: 0, trades: 0 };
+          m.set(entry.bot_name, agg);
+        }
+        agg.wins += entry.win_count ?? 0;
+        agg.losses += entry.loss_count ?? 0;
+        agg.sessions += 1;
+        agg.totalProfit += entry.total_profit;
+        agg.totalFee += entry.total_fee;
+        agg.trades += entry.trade_count ?? 0;
+      }
+    }
+    return m;
+  }, [balanceHistoryGrouped]);
+
   const rows = useMemo(() => {
     return botNames.map((name) => {
+      const bot = bots.find((b) => b.bot_name === name);
+      const initial = bot?.initial_balance ?? 0;
+      const color = BOT_PALETTE[botNames.indexOf(name) % BOT_PALETTE.length];
+      const bp = pnlMap.get(name);
+      const ledger = ledgerByBot.get(name);
+
+      // Use ledger/pnl data if available, fallback to trades
+      if (bp && ledger) {
+        const wins = bp.wins;
+        const losses = bp.losses;
+        const decided = wins + losses;
+        const cancelled = ledger.trades - decided;
+        const total = ledger.trades;
+        const wr = decided > 0 ? (wins / decided) * 100 : 0;
+        const pnl = bp.realized_pnl;
+        const fees = bp.total_fees;
+        const avg = decided > 0 ? pnl / decided : 0;
+        const roi = initial > 0 ? (pnl / initial) * 100 : 0;
+        return { name, color, wins, losses, cancelled: Math.max(0, cancelled), total, decided, wr, pnl, fees, avg, initial, roi, sessions: ledger.sessions };
+      }
+
+      // Fallback to raw trades
       const botSettled = trades.filter((t) => t.bot_name === name && t.result !== 'PENDING');
       const wins = botSettled.filter((t) => t.result === 'WIN').length;
       const losses = botSettled.filter((t) => t.result === 'LOSS').length;
@@ -969,14 +1020,12 @@ function BotSummaryTable({ trades, bots, botNames }: { trades: Trade[]; bots: Bo
       const decided = wins + losses;
       const wr = decided > 0 ? (wins / decided) * 100 : 0;
       const pnl = botSettled.reduce((s, t) => s + (t.profit || 0), 0);
+      const fees = botSettled.reduce((s, t) => s + (t.entry_fee || 0), 0);
       const avg = decided > 0 ? pnl / decided : 0;
-      const bot = bots.find((b) => b.bot_name === name);
-      const initial = bot?.initial_balance ?? 0;
       const roi = initial > 0 ? (pnl / initial) * 100 : 0;
-      const color = BOT_PALETTE[botNames.indexOf(name) % BOT_PALETTE.length];
-      return { name, color, wins, losses, cancelled, total, decided, wr, pnl, avg, initial, roi };
+      return { name, color, wins, losses, cancelled, total, decided, wr, pnl, fees, avg, initial, roi, sessions: 0 };
     }).filter((r) => r.total > 0);
-  }, [trades, bots, botNames]);
+  }, [trades, bots, botNames, pnlMap, ledgerByBot]);
 
   const totals = useMemo(() => {
     const wins = rows.reduce((s, r) => s + r.wins, 0);
@@ -986,10 +1035,12 @@ function BotSummaryTable({ trades, bots, botNames }: { trades: Trade[]; bots: Bo
     const decided = wins + losses;
     const wr = decided > 0 ? (wins / decided) * 100 : 0;
     const pnl = rows.reduce((s, r) => s + r.pnl, 0);
+    const fees = rows.reduce((s, r) => s + r.fees, 0);
     const avg = decided > 0 ? pnl / decided : 0;
     const initial = rows.reduce((s, r) => s + r.initial, 0);
     const roi = initial > 0 ? (pnl / initial) * 100 : 0;
-    return { wins, losses, cancelled, total, decided, wr, pnl, avg, initial, roi };
+    const sessions = rows.reduce((s, r) => s + r.sessions, 0);
+    return { wins, losses, cancelled, total, decided, wr, pnl, fees, avg, initial, roi, sessions };
   }, [rows]);
 
   if (rows.length === 0) return null;
@@ -1010,8 +1061,10 @@ function BotSummaryTable({ trades, bots, botNames }: { trades: Trade[]; bots: Bo
               <th className="px-4 py-2.5 text-right font-medium">C</th>
               <th className="px-4 py-2.5 text-right font-medium">Win Rate</th>
               <th className="px-4 py-2.5 text-right font-medium">P&L</th>
+              <th className="px-4 py-2.5 text-right font-medium">Fees</th>
               <th className="px-4 py-2.5 text-right font-medium">Avg/Trade</th>
               <th className="px-4 py-2.5 text-right font-medium">ROI</th>
+              <th className="px-4 py-2.5 text-right font-medium">Sessions</th>
             </tr>
           </thead>
           <tbody>
@@ -1033,12 +1086,16 @@ function BotSummaryTable({ trades, bots, botNames }: { trades: Trade[]; bots: Bo
                 <td className={`px-4 py-2.5 text-right font-semibold ${pnlCls(r.pnl)}`}>
                   {money(r.pnl)}
                 </td>
+                <td className="px-4 py-2.5 text-right text-slate-500">
+                  {r.fees > 0 ? money(r.fees) : '\u2014'}
+                </td>
                 <td className={`px-4 py-2.5 text-right ${pnlCls(r.avg)}`}>
                   {money(r.avg)}
                 </td>
                 <td className={`px-4 py-2.5 text-right font-semibold ${pnlCls(r.roi)}`}>
                   {r.roi >= 0 ? '+' : ''}{r.roi.toFixed(2)}%
                 </td>
+                <td className="px-4 py-2.5 text-right text-slate-400">{r.sessions || '\u2014'}</td>
               </tr>
             ))}
           </tbody>
@@ -1056,12 +1113,16 @@ function BotSummaryTable({ trades, bots, botNames }: { trades: Trade[]; bots: Bo
                 <td className={`px-4 py-2.5 text-right font-bold ${pnlCls(totals.pnl)}`}>
                   {money(totals.pnl)}
                 </td>
+                <td className="px-4 py-2.5 text-right font-semibold text-slate-500">
+                  {totals.fees > 0 ? money(totals.fees) : '\u2014'}
+                </td>
                 <td className={`px-4 py-2.5 text-right font-bold ${pnlCls(totals.avg)}`}>
                   {money(totals.avg)}
                 </td>
                 <td className={`px-4 py-2.5 text-right font-bold ${pnlCls(totals.roi)}`}>
                   {totals.roi >= 0 ? '+' : ''}{totals.roi.toFixed(2)}%
                 </td>
+                <td className="px-4 py-2.5 text-right font-semibold text-slate-400">{totals.sessions || '\u2014'}</td>
               </tr>
             </tfoot>
           )}

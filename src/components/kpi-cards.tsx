@@ -1,12 +1,13 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Trade, Bot, BotPnl } from '@/lib/api';
+import { Trade, Bot, BotPnl, BalanceHistoryGrouped } from '@/lib/api';
 
 interface KpiCardsProps {
   trades: Trade[];
   bots: Bot[];
   botPnls?: BotPnl[];
+  balanceHistoryGrouped?: BalanceHistoryGrouped[];
 }
 
 interface SessionStat {
@@ -14,9 +15,27 @@ interface SessionStat {
   session_id: string;
   profit: number;
   trades: number;
+  session_result: string | null;
 }
 
-function computeSessionStats(trades: Trade[]): SessionStat[] {
+function computeSessionStatsFromLedger(groups: BalanceHistoryGrouped[]): SessionStat[] {
+  const stats: SessionStat[] = [];
+  for (const group of groups) {
+    for (const entry of group.bots) {
+      if (!entry.session_id) continue;
+      stats.push({
+        bot_name: entry.bot_name,
+        session_id: entry.session_id,
+        profit: entry.delta, // profit - fee
+        trades: entry.trade_count ?? 0,
+        session_result: entry.session_result,
+      });
+    }
+  }
+  return stats;
+}
+
+function computeSessionStatsFromTrades(trades: Trade[]): SessionStat[] {
   const map = new Map<string, SessionStat>();
   for (const t of trades) {
     if (t.result !== 'WIN' && t.result !== 'LOSS') continue;
@@ -24,7 +43,7 @@ function computeSessionStats(trades: Trade[]): SessionStat[] {
     const key = `${t.bot_name}::${t.session_id}`;
     let s = map.get(key);
     if (!s) {
-      s = { bot_name: t.bot_name, session_id: t.session_id, profit: 0, trades: 0 };
+      s = { bot_name: t.bot_name, session_id: t.session_id, profit: 0, trades: 0, session_result: null };
       map.set(key, s);
     }
     s.profit += t.profit ?? 0;
@@ -44,8 +63,13 @@ interface CardDef {
   border: string;
 }
 
-export default function KpiCards({ trades, bots, botPnls = [] }: KpiCardsProps) {
-  const sessionStats = useMemo(() => computeSessionStats(trades), [trades]);
+export default function KpiCards({ trades, bots, botPnls = [], balanceHistoryGrouped = [] }: KpiCardsProps) {
+  const sessionStats = useMemo(() => {
+    if (balanceHistoryGrouped.length > 0) {
+      return computeSessionStatsFromLedger(balanceHistoryGrouped);
+    }
+    return computeSessionStatsFromTrades(trades);
+  }, [trades, balanceHistoryGrouped]);
 
   const pnlMap = useMemo(() => {
     const m = new Map<string, BotPnl>();

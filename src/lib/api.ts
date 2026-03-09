@@ -134,6 +134,29 @@ export interface BalanceHistory {
   recorded_at: string | null;
 }
 
+/** Single bot entry within a grouped balance history snapshot. */
+export interface BotBalanceEntry {
+  bot_name: string;
+  prev_balance: number;
+  new_balance: number;
+  delta: number;
+  total_profit: number;
+  total_fee: number;
+  session_result: string | null; // WIN / LOSS / BREAKEVEN
+  session_id: string | null;
+  symbol: string | null;
+  timeframe: string | null;
+  trade_count: number | null;
+  win_count: number | null;
+  loss_count: number | null;
+}
+
+/** Balance history grouped by settlement timestamp. */
+export interface BalanceHistoryGrouped {
+  settled_at: string;
+  bots: BotBalanceEntry[];
+}
+
 export interface UserBalanceHistory {
   id: number;
   user_id: number;

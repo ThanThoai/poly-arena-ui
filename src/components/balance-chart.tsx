@@ -332,14 +332,12 @@ export default function BalanceChart({
         initBalance: initBal,
         realizedPnl: bp?.realized_pnl ?? 0,
         pointRadius: data.map((_: any, i: number) =>
-          i === 0 || i === lastIdx ? 6 : changeIdx.has(i) ? 3 : 0
+          i === 0 || i === lastIdx ? 5 : 0
         ),
-        pointHoverRadius: 7,
-        pointBackgroundColor: data.map((_: any, i: number) => {
-          if (!changeIdx.has(i)) return color;
-          const prev = i > 0 ? data[i - 1].y : initBal;
-          return data[i].y >= prev ? '#34d399' : '#fb7185';
-        }),
+        pointHoverRadius: data.map((_: any, i: number) =>
+          i === 0 || i === lastIdx ? 7 : 0
+        ),
+        pointBackgroundColor: color,
         pointBorderColor: '#07070d',
         pointBorderWidth: 1.5,
       };

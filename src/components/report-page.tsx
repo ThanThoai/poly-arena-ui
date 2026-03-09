@@ -80,22 +80,72 @@ function computeBotStats(settled: Trade[]): BotStats {
   return { wins, losses, cancelled, total, wr, pnl, avg, wlRatio };
 }
 
-interface DayRow { date: string; wins: number; losses: number; cancelled: number; total: number; wr: string }
+interface DayBotRow { bot_name: string; wins: number; losses: number; pnl: number; fees: number; sessions: number }
+interface DayRow { date: string; wins: number; losses: number; cancelled: number; total: number; pnl: number; fees: number; wr: string; bots: DayBotRow[] }
 
-function computeByDay(settled: Trade[]): DayRow[] {
-  const map: Record<string, { wins: number; losses: number; cancelled: number }> = {};
+function computeByDayFromLedger(groups: BalanceHistoryGrouped[], selectedBot: string): DayRow[] {
+  const map: Record<string, { wins: number; losses: number; pnl: number; fees: number; botMap: Record<string, DayBotRow> }> = {};
+  for (const group of groups) {
+    const d = parseUTC(group.settled_at);
+    if (!d) continue;
+    const key = d.toISOString().slice(0, 10);
+    if (!map[key]) map[key] = { wins: 0, losses: 0, pnl: 0, fees: 0, botMap: {} };
+    const day = map[key];
+    for (const entry of group.bots) {
+      if (selectedBot && entry.bot_name !== selectedBot) continue;
+      day.wins += entry.win_count ?? 0;
+      day.losses += entry.loss_count ?? 0;
+      day.pnl += entry.delta;
+      day.fees += entry.total_fee;
+      if (!day.botMap[entry.bot_name]) {
+        day.botMap[entry.bot_name] = { bot_name: entry.bot_name, wins: 0, losses: 0, pnl: 0, fees: 0, sessions: 0 };
+      }
+      const b = day.botMap[entry.bot_name];
+      b.wins += entry.win_count ?? 0;
+      b.losses += entry.loss_count ?? 0;
+      b.pnl += entry.delta;
+      b.fees += entry.total_fee;
+      b.sessions += 1;
+    }
+  }
+  return Object.entries(map)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([date, v]) => {
+      const decided = v.wins + v.losses;
+      const bots = Object.values(v.botMap).sort((a, b) => b.pnl - a.pnl);
+      return { date, wins: v.wins, losses: v.losses, cancelled: 0, total: decided, pnl: v.pnl, fees: v.fees, wr: decided > 0 ? ((v.wins / decided) * 100).toFixed(1) + '%' : '\u2014', bots };
+    });
+}
+
+function computeByDayFromTrades(settled: Trade[]): DayRow[] {
+  const map: Record<string, { wins: number; losses: number; cancelled: number; pnl: number; fees: number; botMap: Record<string, DayBotRow> }> = {};
   settled.forEach((t) => {
     const d = parseUTC(t.created_at);
     if (!d) return;
     const key = d.toISOString().slice(0, 10);
-    if (!map[key]) map[key] = { wins: 0, losses: 0, cancelled: 0 };
-    if (t.result === 'WIN') map[key].wins++;
-    else if (t.result === 'LOSS') map[key].losses++;
-    else map[key].cancelled++;
+    if (!map[key]) map[key] = { wins: 0, losses: 0, cancelled: 0, pnl: 0, fees: 0, botMap: {} };
+    const day = map[key];
+    const tradePnl = (t.profit || 0) - (t.entry_fee || 0);
+    if (t.result === 'WIN') { day.wins++; }
+    else if (t.result === 'LOSS') { day.losses++; }
+    else { day.cancelled++; }
+    day.pnl += tradePnl;
+    day.fees += t.entry_fee || 0;
+    const bn = t.bot_name;
+    if (!day.botMap[bn]) day.botMap[bn] = { bot_name: bn, wins: 0, losses: 0, pnl: 0, fees: 0, sessions: 0 };
+    const b = day.botMap[bn];
+    if (t.result === 'WIN') b.wins++;
+    else if (t.result === 'LOSS') b.losses++;
+    b.pnl += tradePnl;
+    b.fees += t.entry_fee || 0;
   });
   return Object.entries(map)
     .sort(([a], [b]) => b.localeCompare(a))
-    .map(([date, v]) => ({ date, ...v, total: v.wins + v.losses, wr: v.wins + v.losses > 0 ? ((v.wins / (v.wins + v.losses)) * 100).toFixed(1) + '%' : '—' }));
+    .map(([date, v]) => {
+      const decided = v.wins + v.losses;
+      const bots = Object.values(v.botMap).sort((a, b) => b.pnl - a.pnl);
+      return { date, ...v, total: decided, wr: decided > 0 ? ((v.wins / decided) * 100).toFixed(1) + '%' : '\u2014', bots };
+    });
 }
 
 interface SessionRow { label: string; hours: string; wins: number; losses: number; cancelled: number; total: number; wr: string }
@@ -581,8 +631,11 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
     return { ...base, pnl: totalPnl, avg: decided > 0 ? totalPnl / decided : 0 };
   }, [settled, bots, botPnls, selectedBot]);
 
-  // By Day
-  const byDay = useMemo(() => computeByDay(settled), [settled]);
+  // By Day — prefer ledger, fallback to trades
+  const byDay = useMemo(() => {
+    if (balanceHistoryGrouped.length > 0) return computeByDayFromLedger(balanceHistoryGrouped, selectedBot);
+    return computeByDayFromTrades(settled);
+  }, [settled, balanceHistoryGrouped, selectedBot]);
 
   // By ICT Session
   const bySession = useMemo(() => computeBySession(settled), [settled]);
@@ -639,7 +692,7 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
         name,
         color,
         stats: computeBotStats(botSettled),
-        byDay: computeByDay(botSettled),
+        byDay: computeByDayFromTrades(botSettled),
         bySession: computeBySession(botSettled),
         byTf: computeByTimeframe(botSettled),
         radarData: computeRadarData(botSettled),
@@ -782,70 +835,37 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
             return <AchievementShowcase achievements={achs} />;
           })()}
 
-          {/* Two columns: By Day | By ICT Session */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* By Day */}
-            <div className="card overflow-hidden">
-              <div className="px-4 py-3 border-b border-[#1a1a2a]">
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">By Day</h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
-                      <th className="px-4 py-2 text-left font-medium">Date</th>
-                      <th className="px-4 py-2 text-right font-medium">W</th>
-                      <th className="px-4 py-2 text-right font-medium">L</th>
-                      <th className="px-4 py-2 text-right font-medium">C</th>
-                      <th className="px-4 py-2 text-right font-medium">WR</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {byDay.length === 0 ? (
-                      <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-600">No data</td></tr>
-                    ) : byDay.map((r) => (
-                      <tr key={r.date} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
-                        <td className="px-4 py-2 text-slate-300 font-mono">{r.date}</td>
-                        <td className="px-4 py-2 text-right text-emerald-400">{r.wins}</td>
-                        <td className="px-4 py-2 text-right text-rose-400">{r.losses}</td>
-                        <td className="px-4 py-2 text-right text-slate-500">{r.cancelled}</td>
-                        <td className="px-4 py-2 text-right font-semibold text-slate-200">{r.wr}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+          {/* Daily Report — full width */}
+          <DailyReport rows={byDay} showBotColumn={!selectedBot} />
 
-            {/* By ICT Session */}
-            <div className="card overflow-hidden">
-              <div className="px-4 py-3 border-b border-[#1a1a2a]">
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">By ICT Session</h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
-                      <th className="px-4 py-2 text-left font-medium">Session</th>
-                      <th className="px-4 py-2 text-left font-medium">Hours ({localOffsetLabel()})</th>
-                      <th className="px-4 py-2 text-right font-medium">W</th>
-                      <th className="px-4 py-2 text-right font-medium">L</th>
-                      <th className="px-4 py-2 text-right font-medium">WR</th>
+          {/* By ICT Session */}
+          <div className="card overflow-hidden">
+            <div className="px-4 py-3 border-b border-[#1a1a2a]">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">By ICT Session</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
+                    <th className="px-4 py-2 text-left font-medium">Session</th>
+                    <th className="px-4 py-2 text-left font-medium">Hours ({localOffsetLabel()})</th>
+                    <th className="px-4 py-2 text-right font-medium">W</th>
+                    <th className="px-4 py-2 text-right font-medium">L</th>
+                    <th className="px-4 py-2 text-right font-medium">WR</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bySession.map((r) => (
+                    <tr key={r.label} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
+                      <td className="px-4 py-2 text-slate-300 font-semibold">{r.label}</td>
+                      <td className="px-4 py-2 text-slate-500 font-mono text-[10px]">{r.hours}</td>
+                      <td className="px-4 py-2 text-right text-emerald-400">{r.wins}</td>
+                      <td className="px-4 py-2 text-right text-rose-400">{r.losses}</td>
+                      <td className="px-4 py-2 text-right font-semibold text-slate-200">{r.wr}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {bySession.map((r) => (
-                      <tr key={r.label} className="border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60">
-                        <td className="px-4 py-2 text-slate-300 font-semibold">{r.label}</td>
-                        <td className="px-4 py-2 text-slate-500 font-mono text-[10px]">{r.hours}</td>
-                        <td className="px-4 py-2 text-right text-emerald-400">{r.wins}</td>
-                        <td className="px-4 py-2 text-right text-rose-400">{r.losses}</td>
-                        <td className="px-4 py-2 text-right font-semibold text-slate-200">{r.wr}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 
@@ -971,6 +991,118 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
         </>
       )}
     </main>
+  );
+}
+
+function DailyReport({ rows, showBotColumn }: { rows: DayRow[]; showBotColumn: boolean }) {
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+
+  const totals = useMemo(() => {
+    const wins = rows.reduce((s, r) => s + r.wins, 0);
+    const losses = rows.reduce((s, r) => s + r.losses, 0);
+    const decided = wins + losses;
+    return {
+      wins, losses,
+      pnl: rows.reduce((s, r) => s + r.pnl, 0),
+      fees: rows.reduce((s, r) => s + r.fees, 0),
+      total: decided,
+      wr: decided > 0 ? ((wins / decided) * 100).toFixed(1) + '%' : '\u2014',
+    };
+  }, [rows]);
+
+  const COL_COUNT = showBotColumn ? 7 : 6;
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#1a1a2a] flex items-center gap-3">
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Daily Report</h3>
+        <span className="text-[10px] text-slate-600">{rows.length} day{rows.length !== 1 ? 's' : ''}</span>
+        {rows.length > 0 && (
+          <div className="ml-auto flex items-center gap-3 text-[11px]">
+            <span className="text-slate-500">
+              <span className="text-emerald-400">{totals.wins}W</span>{' / '}<span className="text-rose-400">{totals.losses}L</span>
+            </span>
+            <span className={`font-semibold ${pnlCls(totals.pnl)}`}>{money(totals.pnl)}</span>
+          </div>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-[10px] text-slate-500 border-b border-[#1a1a2a] uppercase tracking-wide">
+              <th className="px-4 py-2 text-left font-medium">Date</th>
+              <th className="px-4 py-2 text-right font-medium">W</th>
+              <th className="px-4 py-2 text-right font-medium">L</th>
+              <th className="px-4 py-2 text-right font-medium">WR</th>
+              <th className="px-4 py-2 text-right font-medium">P&L</th>
+              <th className="px-4 py-2 text-right font-medium">Fees</th>
+              {showBotColumn && <th className="px-4 py-2 text-right font-medium">Bots</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={COL_COUNT} className="px-4 py-6 text-center text-slate-600">No data</td></tr>
+            ) : rows.map((r) => {
+              const isExpanded = expandedDate === r.date;
+              const hasBots = showBotColumn && r.bots.length > 1;
+              return (
+                <React.Fragment key={r.date}>
+                  <tr
+                    className={`border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60 ${hasBots ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-[#0e0e1a]/40' : ''}`}
+                    onClick={() => hasBots && setExpandedDate(isExpanded ? null : r.date)}
+                  >
+                    <td className="px-4 py-2 text-slate-300 font-mono">
+                      <span className="flex items-center gap-1.5">
+                        {hasBots && (
+                          <svg className={`w-3 h-3 text-slate-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        )}
+                        {r.date}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right text-emerald-400">{r.wins}</td>
+                    <td className="px-4 py-2 text-right text-rose-400">{r.losses}</td>
+                    <td className="px-4 py-2 text-right font-semibold text-slate-200">{r.wr}</td>
+                    <td className={`px-4 py-2 text-right font-semibold ${pnlCls(r.pnl)}`}>{money(r.pnl)}</td>
+                    <td className="px-4 py-2 text-right text-slate-500">{r.fees > 0 ? money(r.fees) : '\u2014'}</td>
+                    {showBotColumn && <td className="px-4 py-2 text-right text-slate-500">{r.bots.length}</td>}
+                  </tr>
+                  {isExpanded && r.bots.map((b) => {
+                    const decided = b.wins + b.losses;
+                    const wr = decided > 0 ? ((b.wins / decided) * 100).toFixed(1) + '%' : '\u2014';
+                    return (
+                      <tr key={b.bot_name} className="bg-[#08081a] border-b border-[#0e0e1a]">
+                        <td className="pl-10 pr-4 py-1.5 text-slate-400 text-[11px]">{b.bot_name}</td>
+                        <td className="px-4 py-1.5 text-right text-emerald-400/70 text-[11px]">{b.wins}</td>
+                        <td className="px-4 py-1.5 text-right text-rose-400/70 text-[11px]">{b.losses}</td>
+                        <td className="px-4 py-1.5 text-right text-slate-400 text-[11px]">{wr}</td>
+                        <td className={`px-4 py-1.5 text-right text-[11px] font-medium ${pnlCls(b.pnl)}`}>{money(b.pnl)}</td>
+                        <td className="px-4 py-1.5 text-right text-slate-600 text-[11px]">{b.fees > 0 ? money(b.fees) : '\u2014'}</td>
+                        <td className="px-4 py-1.5 text-right text-slate-600 text-[11px]">{b.sessions}s</td>
+                      </tr>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+          {rows.length > 1 && (
+            <tfoot>
+              <tr className="border-t border-[#1a1a2e] bg-[#0a0a14]">
+                <td className="px-4 py-2.5 font-semibold text-slate-300">Total</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-emerald-400">{totals.wins}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-rose-400">{totals.losses}</td>
+                <td className="px-4 py-2.5 text-right font-bold text-slate-200">{totals.wr}</td>
+                <td className={`px-4 py-2.5 text-right font-bold ${pnlCls(totals.pnl)}`}>{money(totals.pnl)}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-slate-500">{totals.fees > 0 ? money(totals.fees) : '\u2014'}</td>
+                {showBotColumn && <td className="px-4 py-2.5" />}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
   );
 }
 

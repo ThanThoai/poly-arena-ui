@@ -143,9 +143,6 @@ export interface BotBalanceEntry {
   total_profit: number;
   total_fee: number;
   session_result: string | null; // WIN / LOSS / BREAKEVEN
-  session_id: string | null;
-  symbol: string | null;
-  timeframe: string | null;
   trade_count: number | null;
   win_count: number | null;
   loss_count: number | null;
@@ -335,6 +332,48 @@ export interface VolumeBar {
   down_amount: number;
   up_trades: number;
   down_trades: number;
+}
+
+export interface BotOrderHistoryParams {
+  bot_name: string;
+  date_from?: string;   // YYYY-MM-DD
+  date_to?: string;     // YYYY-MM-DD
+  result?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface BotOrderHistoryResult {
+  orders: Trade[];
+  total: number;
+}
+
+export async function fetchBotOrderHistory(params: BotOrderHistoryParams): Promise<BotOrderHistoryResult> {
+  const qs = new URLSearchParams();
+  qs.set('bot_name', params.bot_name);
+  if (params.date_from) qs.set('date_from', params.date_from);
+  if (params.date_to) qs.set('date_to', params.date_to);
+  if (params.result) qs.set('result', params.result);
+  if (params.limit) qs.set('limit', String(params.limit));
+  if (params.offset) qs.set('offset', String(params.offset));
+
+  const res = await fetch(`${BASE}/bots/order-history?${qs.toString()}`, {
+    headers: (() => {
+      const h: Record<string, string> = {};
+      const token = getToken();
+      if (token) h['Authorization'] = `Bearer ${token}`;
+      return h;
+    })(),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || res.statusText);
+  }
+
+  const total = parseInt(res.headers.get('X-Total-Count') || '0', 10);
+  const orders: Trade[] = await res.json();
+  return { orders, total };
 }
 
 export async function fetchSessionVolume(

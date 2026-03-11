@@ -203,7 +203,7 @@ export default function BalanceChart({
     trade_count: number;
     win_count: number;
     loss_count: number;
-    sessions: { session_id: string | null; session_result: string | null; delta: number }[];
+    session_result: string | null;
   }
 
   const { botBinnedData, aggregatedMeta } = useMemo(() => {
@@ -232,9 +232,7 @@ export default function BalanceChart({
             existing.meta.trade_count += entry.trade_count ?? 0;
             existing.meta.win_count += entry.win_count ?? 0;
             existing.meta.loss_count += entry.loss_count ?? 0;
-            existing.meta.sessions.push({
-              session_id: entry.session_id, session_result: entry.session_result, delta: entry.delta,
-            });
+            existing.meta.session_result = entry.session_result;
           } else {
             timeline.set(ts, {
               balance: entry.new_balance,
@@ -245,7 +243,7 @@ export default function BalanceChart({
                 trade_count: entry.trade_count ?? 0,
                 win_count: entry.win_count ?? 0,
                 loss_count: entry.loss_count ?? 0,
-                sessions: [{ session_id: entry.session_id, session_result: entry.session_result, delta: entry.delta }],
+                session_result: entry.session_result,
               },
             });
           }
@@ -403,19 +401,8 @@ export default function BalanceChart({
             if (pm) {
               const deltaSign = pm.delta >= 0 ? '+' : '';
               const tradeInfo = pm.trade_count ? ` (${pm.win_count}W/${pm.loss_count}L)` : '';
-              // Show per-session breakdown if multiple sessions in this point
-              if (pm.sessions.length > 1) {
-                const sessionTags = pm.sessions.map((s) => {
-                  const sid = s.session_id?.split(':').slice(0, 2).join(':') ?? '?';
-                  const res = s.session_result ? `${s.session_result}` : '';
-                  const d = s.delta >= 0 ? '+' : '';
-                  return `${sid} ${d}$${s.delta.toFixed(2)} ${res}`;
-                }).join(' | ');
-                return ` ${botName}: ${formatted} ${deltaSign}$${pm.delta.toFixed(2)}${tradeInfo} [${sessionTags}]`;
-              }
-              const resultTag = pm.sessions[0]?.session_result ? ` [${pm.sessions[0].session_result}]` : '';
-              const sessionTag = pm.sessions[0]?.session_id ? ` ${pm.sessions[0].session_id}` : '';
-              return ` ${botName}: ${formatted} ${deltaSign}$${pm.delta.toFixed(2)}${resultTag}${tradeInfo}${sessionTag}`;
+              const resultTag = pm.session_result ? ` [${pm.session_result}]` : '';
+              return ` ${botName}: ${formatted} ${deltaSign}$${pm.delta.toFixed(2)}${resultTag}${tradeInfo}`;
             }
 
             // Fallback

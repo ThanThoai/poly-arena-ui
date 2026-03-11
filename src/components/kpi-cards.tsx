@@ -12,7 +12,7 @@ interface KpiCardsProps {
 
 interface SessionStat {
   bot_name: string;
-  session_id: string;
+  label: string;
   profit: number;
   trades: number;
   session_result: string | null;
@@ -21,11 +21,12 @@ interface SessionStat {
 function computeSessionStatsFromLedger(groups: BalanceHistoryGrouped[]): SessionStat[] {
   const stats: SessionStat[] = [];
   for (const group of groups) {
+    const ts = new Date(group.settled_at);
+    const label = ts.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     for (const entry of group.bots) {
-      if (!entry.session_id) continue;
       stats.push({
         bot_name: entry.bot_name,
-        session_id: entry.session_id,
+        label,
         profit: entry.delta, // profit - fee
         trades: entry.trade_count ?? 0,
         session_result: entry.session_result,
@@ -43,7 +44,7 @@ function computeSessionStatsFromTrades(trades: Trade[]): SessionStat[] {
     const key = `${t.bot_name}::${t.session_id}`;
     let s = map.get(key);
     if (!s) {
-      s = { bot_name: t.bot_name, session_id: t.session_id, profit: 0, trades: 0, session_result: null };
+      s = { bot_name: t.bot_name, label: t.session_id, profit: 0, trades: 0, session_result: null };
       map.set(key, s);
     }
     s.profit += t.profit ?? 0;
@@ -135,7 +136,7 @@ export default function KpiCards({ trades, bots, botPnls = [], balanceHistoryGro
           icon: '\uD83D\uDD25',
           name: best.bot_name,
           value: fmtProfit(best.profit),
-          sub: `${best.trades} trade${best.trades > 1 ? 's' : ''} · ${best.session_id}`,
+          sub: `${best.trades} trade${best.trades > 1 ? 's' : ''} · ${best.label}`,
           color: '#38bdf8',
           bg: '#0a141a',
           border: '#0d2a3d',
@@ -145,7 +146,7 @@ export default function KpiCards({ trades, bots, botPnls = [], balanceHistoryGro
           icon: '\u2744\uFE0F',
           name: worst.bot_name,
           value: fmtProfit(worst.profit),
-          sub: `${worst.trades} trade${worst.trades > 1 ? 's' : ''} · ${worst.session_id}`,
+          sub: `${worst.trades} trade${worst.trades > 1 ? 's' : ''} · ${worst.label}`,
           color: '#fb923c',
           bg: '#1a1208',
           border: '#3d280a',

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Chart as ChartJS,
   RadialLinearScale,
@@ -12,7 +12,7 @@ import {
 } from 'chart.js';
 import { Radar } from 'react-chartjs-2';
 import type { ChartOptions } from 'chart.js';
-import { Trade, Bot, BotPnl, BalanceHistoryGrouped, BotAchievement } from '@/lib/api';
+import { Trade, Bot, BotPnl, BalanceHistoryGrouped, BotAchievement, fetchBotOrderHistory } from '@/lib/api';
 import { BOT_PALETTE, money, pnlCls, parseUTC } from '@/lib/helpers';
 import CustomSelect from '@/components/ui/custom-select';
 import PositionsTable from '@/components/positions-table';
@@ -682,6 +682,42 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
     [bots, selectedBot],
   );
 
+  // Fetch ALL orders for the selected bot (dashboard only has 500 latest across all bots)
+  const [botAllTrades, setBotAllTrades] = useState<Trade[]>([]);
+  const [botAllTradesLoading, setBotAllTradesLoading] = useState(false);
+  const [botAllTradesName, setBotAllTradesName] = useState('');
+
+  useEffect(() => {
+    if (!selectedBot) {
+      setBotAllTrades([]);
+      setBotAllTradesName('');
+      return;
+    }
+    // Skip re-fetch if same bot
+    if (selectedBot === botAllTradesName && botAllTrades.length > 0) return;
+    let cancelled = false;
+    setBotAllTradesLoading(true);
+    fetchBotOrderHistory({ bot_name: selectedBot, limit: 5000 })
+      .then((res) => {
+        if (cancelled) return;
+        setBotAllTrades(res.orders);
+        setBotAllTradesName(selectedBot);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Fallback to filtered dashboard trades
+        setBotAllTrades([]);
+        setBotAllTradesName('');
+      })
+      .finally(() => { if (!cancelled) setBotAllTradesLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedBot]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Use fetched bot trades if available, else fallback to dashboard filtered trades
+  const tradesForHistory = selectedBot && botAllTradesName === selectedBot && botAllTrades.length > 0
+    ? botAllTrades
+    : filteredTrades;
+
   // Compare mode — compute data for each selected bot
   const botsCompareData: BotCompareData[] = useMemo(() => {
     if (!compareMode) return [];
@@ -987,15 +1023,135 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
 
           {/* Open Positions & Trade History */}
           <PositionsTable trades={filteredTrades} bots={filteredBots} />
-          <TradeHistory trades={filteredTrades} bots={filteredBots} />
+          {botAllTradesLoading && selectedBot && (
+            <div className="card p-4 text-center text-slate-500 text-xs">Loading all orders for {selectedBot}...</div>
+          )}
+          <TradeHistory trades={tradesForHistory} bots={filteredBots} />
         </>
       )}
     </main>
   );
 }
 
+/* ── Inline Order History for a bot on a specific date ── */
+
+function BotDayOrders({ botName, date }: { botName: string; date: string }) {
+  const [orders, setOrders] = useState<Trade[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    fetchBotOrderHistory({ bot_name: botName, date_from: date, date_to: date, limit: 200 })
+      .then((res) => {
+        if (cancelled) return;
+        setOrders(res.orders);
+        setTotal(res.total);
+      })
+      .catch((e) => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [botName, date]);
+
+  if (loading) {
+    return (
+      <tr><td colSpan={7} className="px-8 py-3 text-center text-slate-500 text-[11px]">
+        Loading orders...
+      </td></tr>
+    );
+  }
+  if (error) {
+    return (
+      <tr><td colSpan={7} className="px-8 py-3 text-center text-rose-400 text-[11px]">
+        Error: {error}
+      </td></tr>
+    );
+  }
+  if (orders.length === 0) {
+    return (
+      <tr><td colSpan={7} className="px-8 py-3 text-center text-slate-600 text-[11px]">
+        No orders found
+      </td></tr>
+    );
+  }
+
+  return (
+    <>
+      {/* Sub-header */}
+      <tr className="bg-[#06061a]">
+        <td colSpan={7} className="px-8 py-1.5">
+          <div className="flex items-center gap-4 text-[10px] text-slate-500 uppercase tracking-wide font-medium">
+            <span className="w-16">Time</span>
+            <span className="w-12">Symbol</span>
+            <span className="w-10">TF</span>
+            <span className="w-14">Forecast</span>
+            <span className="w-14 text-right">Amount</span>
+            <span className="w-14 text-right">Result</span>
+            <span className="w-20 text-right">P&L</span>
+            <span className="w-14 text-right">Fee</span>
+            <span className="w-14 text-right">Type</span>
+            {total > orders.length && <span className="ml-auto text-slate-600">{orders.length}/{total}</span>}
+          </div>
+        </td>
+      </tr>
+      {orders.map((o) => {
+        const d = parseUTC(o.created_at);
+        const time = d ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+        const netPnl = (o.profit || 0) - (o.entry_fee || 0);
+        const resultCls = o.result === 'WIN' ? 'text-emerald-400 bg-emerald-400/10'
+          : o.result === 'LOSS' ? 'text-rose-400 bg-rose-400/10'
+          : o.result === 'CANCELLED' ? 'text-amber-400 bg-amber-400/10'
+          : 'text-slate-400 bg-slate-400/10';
+        return (
+          <tr key={o.id} className="bg-[#050518] border-b border-[#0a0a1a] hover:bg-[#08081f]">
+            <td colSpan={7} className="px-8 py-1.5">
+              <div className="flex items-center gap-4 text-[11px]">
+                <span className="w-16 text-slate-500 font-mono">{time}</span>
+                <span className="w-12 text-slate-300 font-semibold">{o.symbol}</span>
+                <span className="w-10 text-slate-400">{o.timeframe}</span>
+                <span className="w-14">
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${o.forecast === 'GREEN' ? 'text-emerald-400 bg-emerald-400/10' : 'text-rose-400 bg-rose-400/10'}`}>
+                    {o.forecast}
+                  </span>
+                </span>
+                <span className="w-14 text-right text-slate-300">{money(o.amount)}</span>
+                <span className="w-14 text-right">
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${resultCls}`}>
+                    {o.result || 'PENDING'}
+                  </span>
+                </span>
+                <span className={`w-20 text-right font-medium ${pnlCls(netPnl)}`}>
+                  {o.result && o.result !== 'PENDING' ? money(netPnl) : '—'}
+                </span>
+                <span className="w-14 text-right text-slate-600">
+                  {o.entry_fee ? money(o.entry_fee) : '—'}
+                </span>
+                <span className="w-14 text-right text-slate-500">
+                  {o.order_type || 'MKT'}
+                  {o.limit_price ? ` @${o.limit_price.toFixed(2)}` : ''}
+                </span>
+              </div>
+            </td>
+          </tr>
+        );
+      })}
+    </>
+  );
+}
+
+
 function DailyReport({ rows, showBotColumn }: { rows: DayRow[]; showBotColumn: boolean }) {
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  // Track which bot+date pairs have their orders expanded
+  const [expandedBotDay, setExpandedBotDay] = useState<string | null>(null); // "botName|date"
+
+  const toggleBotDay = useCallback((botName: string, date: string) => {
+    const key = `${botName}|${date}`;
+    setExpandedBotDay((prev) => prev === key ? null : key);
+  }, []);
 
   const totals = useMemo(() => {
     const wins = rows.reduce((s, r) => s + r.wins, 0);
@@ -1045,19 +1201,28 @@ function DailyReport({ rows, showBotColumn }: { rows: DayRow[]; showBotColumn: b
             ) : rows.map((r) => {
               const isExpanded = expandedDate === r.date;
               const hasBots = showBotColumn && r.bots.length > 1;
+              // In single-bot mode, the row itself is clickable to show orders
+              const isSingleBot = !showBotColumn || r.bots.length === 1;
+              const singleBotName = isSingleBot && r.bots.length > 0 ? r.bots[0].bot_name : null;
+              const singleBotExpanded = singleBotName ? expandedBotDay === `${singleBotName}|${r.date}` : false;
               return (
                 <React.Fragment key={r.date}>
                   <tr
-                    className={`border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60 ${hasBots ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-[#0e0e1a]/40' : ''}`}
-                    onClick={() => hasBots && setExpandedDate(isExpanded ? null : r.date)}
+                    className={`border-b border-[#0e0e1a] hover:bg-[#0e0e1a]/60 cursor-pointer ${isExpanded || singleBotExpanded ? 'bg-[#0e0e1a]/40' : ''}`}
+                    onClick={() => {
+                      if (isSingleBot && singleBotName) {
+                        toggleBotDay(singleBotName, r.date);
+                      } else if (hasBots) {
+                        setExpandedDate(isExpanded ? null : r.date);
+                        setExpandedBotDay(null);
+                      }
+                    }}
                   >
                     <td className="px-4 py-2 text-slate-300 font-mono">
                       <span className="flex items-center gap-1.5">
-                        {hasBots && (
-                          <svg className={`w-3 h-3 text-slate-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                          </svg>
-                        )}
+                        <svg className={`w-3 h-3 text-slate-500 transition-transform ${isExpanded || singleBotExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
                         {r.date}
                       </span>
                     </td>
@@ -1068,19 +1233,41 @@ function DailyReport({ rows, showBotColumn }: { rows: DayRow[]; showBotColumn: b
                     <td className="px-4 py-2 text-right text-slate-500">{r.fees > 0 ? money(r.fees) : '\u2014'}</td>
                     {showBotColumn && <td className="px-4 py-2 text-right text-slate-500">{r.bots.length}</td>}
                   </tr>
+                  {/* Single-bot mode: show orders directly under the date row */}
+                  {singleBotExpanded && singleBotName && (
+                    <BotDayOrders botName={singleBotName} date={r.date} />
+                  )}
+                  {/* Multi-bot mode: expand to show per-bot rows, each clickable for orders */}
                   {isExpanded && r.bots.map((b) => {
                     const decided = b.wins + b.losses;
                     const wr = decided > 0 ? ((b.wins / decided) * 100).toFixed(1) + '%' : '\u2014';
+                    const botDayKey = `${b.bot_name}|${r.date}`;
+                    const isBotExpanded = expandedBotDay === botDayKey;
                     return (
-                      <tr key={b.bot_name} className="bg-[#08081a] border-b border-[#0e0e1a]">
-                        <td className="pl-10 pr-4 py-1.5 text-slate-400 text-[11px]">{b.bot_name}</td>
-                        <td className="px-4 py-1.5 text-right text-emerald-400/70 text-[11px]">{b.wins}</td>
-                        <td className="px-4 py-1.5 text-right text-rose-400/70 text-[11px]">{b.losses}</td>
-                        <td className="px-4 py-1.5 text-right text-slate-400 text-[11px]">{wr}</td>
-                        <td className={`px-4 py-1.5 text-right text-[11px] font-medium ${pnlCls(b.pnl)}`}>{money(b.pnl)}</td>
-                        <td className="px-4 py-1.5 text-right text-slate-600 text-[11px]">{b.fees > 0 ? money(b.fees) : '\u2014'}</td>
-                        <td className="px-4 py-1.5 text-right text-slate-600 text-[11px]">{b.sessions}s</td>
-                      </tr>
+                      <React.Fragment key={b.bot_name}>
+                        <tr
+                          className={`bg-[#08081a] border-b border-[#0e0e1a] cursor-pointer hover:bg-[#0c0c22] ${isBotExpanded ? 'bg-[#0c0c22]' : ''}`}
+                          onClick={() => toggleBotDay(b.bot_name, r.date)}
+                        >
+                          <td className="pl-10 pr-4 py-1.5 text-slate-400 text-[11px]">
+                            <span className="flex items-center gap-1.5">
+                              <svg className={`w-2.5 h-2.5 text-slate-600 transition-transform ${isBotExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                              {b.bot_name}
+                            </span>
+                          </td>
+                          <td className="px-4 py-1.5 text-right text-emerald-400/70 text-[11px]">{b.wins}</td>
+                          <td className="px-4 py-1.5 text-right text-rose-400/70 text-[11px]">{b.losses}</td>
+                          <td className="px-4 py-1.5 text-right text-slate-400 text-[11px]">{wr}</td>
+                          <td className={`px-4 py-1.5 text-right text-[11px] font-medium ${pnlCls(b.pnl)}`}>{money(b.pnl)}</td>
+                          <td className="px-4 py-1.5 text-right text-slate-600 text-[11px]">{b.fees > 0 ? money(b.fees) : '\u2014'}</td>
+                          <td className="px-4 py-1.5 text-right text-slate-600 text-[11px]">{b.sessions}s</td>
+                        </tr>
+                        {isBotExpanded && (
+                          <BotDayOrders botName={b.bot_name} date={r.date} />
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </React.Fragment>

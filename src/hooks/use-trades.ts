@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { apiFetch, Trade, Bot, BotPnl, BalanceHistory, BalanceHistoryGrouped, SchedulerStatus, PriceEntry, OrderbookEntry, AchievementDef, BotAchievement } from '@/lib/api';
+import { apiFetch, Trade, Bot, BotPnl, BalanceHistory, BalanceHistoryGrouped, SchedulerStatus, PriceEntry, OrderbookEntry, AchievementDef, BotAchievement, fetchTradeHistory, TradeHistoryFilters } from '@/lib/api';
 
 export interface DashboardData {
   trades: Trade[];
@@ -76,6 +76,71 @@ export function useDashboardData(intervalMs = 30_000) {
   }, [fetchAll, intervalMs]);
 
   return { data, loading, error, refresh: fetchAll };
+}
+
+/** Server-side paginated trade history — fetches ALL orders via backend pagination. */
+export function useTradeHistory(filters: TradeHistoryFilters, pageSize = 20, pollMs = 30_000, enabled = true) {
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Keep latest filters/page in ref so polling always uses current values
+  const stateRef = useRef({ filters, page, pageSize });
+  stateRef.current = { filters, page, pageSize };
+
+  // Reset to page 1 when filters change
+  const filtersKey = JSON.stringify(filters);
+  const prevFiltersKey = useRef(filtersKey);
+  if (filtersKey !== prevFiltersKey.current) {
+    prevFiltersKey.current = filtersKey;
+    setPage(1);
+    stateRef.current.page = 1;
+  }
+
+  const doFetch = useCallback(async () => {
+    if (!enabled) return;
+    try {
+      const { filters: f, page: p, pageSize: ps } = stateRef.current;
+      const result = await fetchTradeHistory({ ...f, limit: ps, offset: (p - 1) * ps });
+      setTrades(result.trades);
+      setTotal(result.total);
+    } catch {
+      // keep previous data on error
+    } finally {
+      setLoading(false);
+    }
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled) { setLoading(false); return; }
+    setLoading(true);
+    doFetch();
+  }, [doFetch, enabled, filtersKey, page, pageSize]);
+
+  // Polling with visibility awareness
+  useEffect(() => {
+    if (!enabled) return;
+    const start = () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(doFetch, pollMs);
+    };
+    const stop = () => {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    };
+    const onVis = () => {
+      if (document.hidden) stop();
+      else { doFetch(); start(); }
+    };
+
+    start();
+    document.addEventListener('visibilitychange', onVis);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
+  }, [doFetch, enabled, pollMs]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  return { trades, total, page, setPage, totalPages, loading, refresh: doFetch };
 }
 
 /** Dedicated hook for live price feed — polls every 5s, pauses when tab hidden. */

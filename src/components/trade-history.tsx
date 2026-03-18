@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { Trade, Bot } from '@/lib/api';
+import { Trade, Bot, TradeHistoryFilters } from '@/lib/api';
+import { useTradeHistory } from '@/hooks/use-trades';
 import { money, pnlCls, parseUTC, dtMs, dtParts, fmtCents } from '@/lib/helpers';
 import SymbolBadge from '@/components/ui/symbol-badge';
 import ResultPill, { displayResult } from '@/components/ui/result-pill';
@@ -12,39 +13,65 @@ import InspectorModal from '@/components/modals/inspector-modal';
 import TraceTimeline from '@/components/ui/trace-timeline';
 import type { TradeHistorySettings } from '@/lib/settings-types';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
 
 interface TradeHistoryProps {
-  trades: Trade[];
+  trades?: Trade[];
   bots: Bot[];
   isAdmin?: boolean;
   initialSettings?: TradeHistorySettings;
   onSettingsChange?: (s: TradeHistorySettings) => void;
 }
 
-export default function TradeHistory({ trades, bots, isAdmin, initialSettings, onSettingsChange }: TradeHistoryProps) {
+export default function TradeHistory({ trades: propTrades, bots, isAdmin, initialSettings, onSettingsChange }: TradeHistoryProps) {
+  const isServerMode = !propTrades;
+
   const [botFilter, setBotFilter] = useState(initialSettings?.botFilter ?? '');
   const [symbolFilter, setSymbolFilter] = useState(initialSettings?.symbolFilter ?? '');
   const [tfFilter, setTfFilter] = useState(initialSettings?.tfFilter ?? '');
   const [typeFilter, setTypeFilter] = useState(initialSettings?.typeFilter ?? '');
   const [forecastFilter, setForecastFilter] = useState(initialSettings?.forecastFilter ?? '');
   const [resultFilter, setResultFilter] = useState(initialSettings?.resultFilter ?? '');
-  const [currentPage, setCurrentPage] = useState(1);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [historyOpen, setHistoryOpen] = useState(initialSettings?.open ?? true);
   const [traceTrade, setTraceTrade] = useState<Trade | null>(null);
   const [inspectTrade, setInspectTrade] = useState<Trade | null>(null);
 
+  // Client-side pagination state (only for propTrades mode)
+  const [clientPage, setClientPage] = useState(1);
+
   const emitSettings = (patch: Partial<TradeHistorySettings>) => {
     onSettingsChange?.({ botFilter, symbolFilter, tfFilter, typeFilter, forecastFilter, resultFilter, open: historyOpen, ...patch });
   };
 
+  // Build server-side filters (only used when isServerMode)
+  const serverFilters = useMemo<TradeHistoryFilters>(() => {
+    const f: TradeHistoryFilters = {};
+    if (botFilter) f.bot_name = botFilter;
+    if (symbolFilter) f.symbol = symbolFilter;
+    if (tfFilter) f.timeframe = tfFilter;
+    if (forecastFilter) f.forecast = forecastFilter;
+    if (resultFilter) f.result = resultFilter;
+    return f;
+  }, [botFilter, symbolFilter, tfFilter, forecastFilter, resultFilter]);
+
+  // Server-side paginated hook (disabled when trades are passed as props)
+  const {
+    trades: serverTrades,
+    total: serverTotal,
+    page: serverPage,
+    setPage: setServerPage,
+    totalPages: serverTotalPages,
+    loading: serverLoading,
+  } = useTradeHistory(serverFilters, PAGE_SIZE, 30_000, isServerMode);
+
   const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
 
-  const filtered = useMemo(() => {
-    return trades.filter(
+  // ── Client-side mode (propTrades provided) ──────────────────────────
+  const clientFiltered = useMemo(() => {
+    if (!propTrades) return [];
+    return propTrades.filter(
       (t) =>
-        t.result !== 'PENDING' &&
         (!botFilter || t.bot_name === botFilter) &&
         (!symbolFilter || t.symbol === symbolFilter) &&
         (!tfFilter || t.timeframe === tfFilter) &&
@@ -52,12 +79,31 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
         (!forecastFilter || t.forecast === forecastFilter) &&
         (!resultFilter || displayResult(t) === resultFilter),
     );
-  }, [trades, botFilter, symbolFilter, tfFilter, typeFilter, forecastFilter, resultFilter]);
+  }, [propTrades, botFilter, symbolFilter, tfFilter, typeFilter, forecastFilter, resultFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage = Math.min(currentPage, totalPages);
-  const start = (safePage - 1) * PAGE_SIZE;
-  const vis = filtered.slice(start, start + PAGE_SIZE);
+  // ── Unified view data ───────────────────────────────────────────────
+  // In server mode: type filter (MARKET/LIMIT) is applied client-side since
+  // the backend doesn't support it; everything else is server-side.
+  const vis = isServerMode
+    ? (typeFilter
+        ? serverTrades.filter((t) => typeFilter === 'MARKET' ? t.limit_price == null : t.limit_price != null)
+        : serverTrades)
+    : (() => {
+        const cTotalPages = Math.max(1, Math.ceil(clientFiltered.length / PAGE_SIZE));
+        const cSafePage = Math.min(clientPage, cTotalPages);
+        const cStart = (cSafePage - 1) * PAGE_SIZE;
+        return clientFiltered.slice(cStart, cStart + PAGE_SIZE);
+      })();
+
+  const currentPage = isServerMode ? serverPage : clientPage;
+  const totalPages = isServerMode
+    ? serverTotalPages
+    : Math.max(1, Math.ceil(clientFiltered.length / PAGE_SIZE));
+  const totalCount = isServerMode ? serverTotal : clientFiltered.length;
+  const setCurrentPage = isServerMode ? setServerPage : setClientPage;
+
+  const startIdx = totalCount > 0 ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
+  const endIdx = Math.min(currentPage * PAGE_SIZE, totalCount);
 
   const clearFilters = () => {
     setBotFilter('');
@@ -79,29 +125,28 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
     });
   };
 
-  // Symbol stats
+  // Symbol stats (only meaningful in client mode with full data)
   const symbolStats = useMemo(() => {
+    const source = propTrades ?? serverTrades;
     if (!symbolFilter) return null;
-    const st = trades.filter((t) => t.symbol === symbolFilter);
+    const st = source.filter((t) => t.symbol === symbolFilter);
     if (!st.length) return null;
     const wins = st.filter((t) => t.result === 'WIN').length;
     const losses = st.filter((t) => t.result === 'LOSS').length;
     const pend = st.filter((t) => t.result === 'PENDING').length;
     const profit = st.reduce((s, t) => s + (t.profit || 0) - (t.entry_fee || 0), 0);
     return { symbol: symbolFilter, total: st.length, wins, losses, pending: pend, profit };
-  }, [trades, symbolFilter]);
-
-  const from = filtered.length ? start + 1 : 0;
-  const to = Math.min(start + PAGE_SIZE, filtered.length);
+  }, [propTrades, serverTrades, symbolFilter]);
 
   const filteredStats = useMemo(() => {
-    const wins = filtered.filter((t) => t.result === 'WIN').length;
-    const losses = filtered.filter((t) => t.result === 'LOSS').length;
-    const totalProfit = filtered.reduce((s, t) => s + (t.profit ?? 0) - (t.entry_fee ?? 0), 0);
-    const totalAmount = filtered.reduce((s, t) => s + t.amount, 0);
-    const totalFees = filtered.reduce((s, t) => s + (t.entry_fee ?? 0), 0);
+    const source = isServerMode ? vis : clientFiltered;
+    const wins = source.filter((t) => t.result === 'WIN').length;
+    const losses = source.filter((t) => t.result === 'LOSS').length;
+    const totalProfit = source.reduce((s, t) => s + (t.profit ?? 0) - (t.entry_fee ?? 0), 0);
+    const totalAmount = source.reduce((s, t) => s + t.amount, 0);
+    const totalFees = source.reduce((s, t) => s + (t.entry_fee ?? 0), 0);
     return { wins, losses, totalProfit, totalAmount, totalFees };
-  }, [filtered]);
+  }, [isServerMode, vis, clientFiltered]);
 
   return (
     <div className="card overflow-hidden">
@@ -114,7 +159,7 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
             </svg>
           </span>
           <h3 className="text-xs font-semibold text-slate-400 group-hover:text-slate-200 uppercase tracking-widest transition-colors">Trade History</h3>
-          {filtered.length > 0 && (
+          {totalCount > 0 && (
             <span className="text-[11px] text-slate-500 ml-1">
               P&L <span className={`font-semibold ${pnlCls(filteredStats.totalProfit)}`}>{money(filteredStats.totalProfit)}</span>
               <span className="text-slate-600 ml-1.5">{filteredStats.wins}W / {filteredStats.losses}L</span>
@@ -261,7 +306,9 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
                 </tr>
               </thead>
               <tbody>
-                {vis.length === 0 ? (
+                {isServerMode && serverLoading ? (
+                  <tr><td colSpan={14} className="px-5 py-12 text-center text-slate-500">Loading...</td></tr>
+                ) : vis.length === 0 ? (
                   <tr><td colSpan={14} className="px-5 py-12 text-center text-slate-600">No trades match filters</td></tr>
                 ) : (
                   vis.map((t) => <TradeRow key={t.id} trade={t} open={expandedRows.has(t.id)} onToggle={() => toggleDetail(t.id)} onTrace={() => setTraceTrade(t)} isAdmin={isAdmin} onInspect={() => setInspectTrade(t)} />)
@@ -274,10 +321,10 @@ export default function TradeHistory({ trades, bots, isAdmin, initialSettings, o
           <div className="px-5 py-2.5 border-t border-[#1a1a2a] flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-[11px] text-slate-600">
-                {filtered.length ? `${from}\u2013${to} of ${filtered.length} trade${filtered.length !== 1 ? 's' : ''}` : '0 trades'}
+                {totalCount > 0 ? `${startIdx}\u2013${endIdx} of ${totalCount} trade${totalCount !== 1 ? 's' : ''}` : '0 trades'}
               </span>
             </div>
-            <Pagination currentPage={safePage} totalPages={totalPages} onPageChange={setCurrentPage} />
+            <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
           </div>
         </div>
       </div>

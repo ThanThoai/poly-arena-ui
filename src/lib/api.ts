@@ -334,6 +334,54 @@ export interface VolumeBar {
   down_trades: number;
 }
 
+export interface TradeHistoryFilters {
+  bot_name?: string;
+  symbol?: string;
+  timeframe?: string;
+  forecast?: string;
+  result?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface TradeHistoryResult {
+  trades: Trade[];
+  total: number;
+}
+
+export async function fetchTradeHistory(filters: TradeHistoryFilters): Promise<TradeHistoryResult> {
+  const qs = new URLSearchParams();
+  if (filters.bot_name) qs.set('bot_name', filters.bot_name);
+  if (filters.symbol) qs.set('symbol', filters.symbol);
+  if (filters.timeframe) qs.set('timeframe', filters.timeframe);
+  if (filters.forecast) qs.set('forecast', filters.forecast);
+  if (filters.result) qs.set('result', filters.result);
+  qs.set('limit', String(filters.limit ?? 50));
+  qs.set('offset', String(filters.offset ?? 0));
+
+  const res = await fetch(`${BASE}/binary-options?${qs.toString()}`, {
+    headers: (() => {
+      const h: Record<string, string> = {};
+      const token = getToken();
+      if (token) h['Authorization'] = `Bearer ${token}`;
+      return h;
+    })(),
+  });
+
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || res.statusText);
+  }
+
+  const total = parseInt(res.headers.get('X-Total-Count') || '0', 10);
+  const trades: Trade[] = await res.json();
+  return { trades, total };
+}
+
 export interface BotOrderHistoryParams {
   bot_name: string;
   date_from?: string;   // YYYY-MM-DD

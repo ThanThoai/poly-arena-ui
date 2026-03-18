@@ -139,7 +139,6 @@ export default function Dashboard() {
           />
 
           <TradeHistory
-            trades={trades}
             bots={bots}
             initialSettings={settings.tradeHistory}
             onSettingsChange={(s) => updateSettings({ tradeHistory: s })}

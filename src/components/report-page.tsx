@@ -12,7 +12,7 @@ import {
 } from 'chart.js';
 import { Radar } from 'react-chartjs-2';
 import type { ChartOptions } from 'chart.js';
-import { Trade, Bot, BotPnl, BalanceHistoryGrouped, BotAchievement, fetchBotOrderHistory } from '@/lib/api';
+import { Trade, Bot, BotPnl, BalanceHistoryGrouped, BotAchievement, fetchBotOrderHistory, fetchAllTrades } from '@/lib/api';
 import { BOT_PALETTE, money, pnlCls, parseUTC } from '@/lib/helpers';
 import CustomSelect from '@/components/ui/custom-select';
 import PositionsTable from '@/components/positions-table';
@@ -608,28 +608,56 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
   const [compareMode, setCompareMode] = useState(false);
   const [compareBots, setCompareBots] = useState<string[]>([]);
 
+  // Fetch ALL trades for breakdown metrics (bySession, byTimeframe, radar, etc.)
+  const [allTrades, setAllTrades] = useState<Trade[]>(trades);
+  const [allTradesLoading, setAllTradesLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAllTradesLoading(true);
+    fetchAllTrades().then((result) => {
+      if (!cancelled) {
+        setAllTrades(result);
+        setAllTradesLoading(false);
+      }
+    }).catch(() => {
+      if (!cancelled) setAllTradesLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []); // fetch once on mount
+
   const botTrades = useMemo(
-    () => (selectedBot ? trades.filter((t) => t.bot_name === selectedBot) : trades),
-    [trades, selectedBot],
+    () => (selectedBot ? allTrades.filter((t) => t.bot_name === selectedBot) : allTrades),
+    [allTrades, selectedBot],
   );
   const settled = useMemo(() => botTrades.filter((t) => t.result !== 'PENDING'), [botTrades]);
 
-  // KPIs (single-bot mode) — P&L based on current_balance - initial_balance
+  // KPIs (single-bot mode) — use botPnls (full DB data) for accurate counts
   const stats = useMemo(() => {
-    const base = computeBotStats(settled);
-    // Override P&L: use balance-based calculation
     const targetBots = selectedBot ? bots.filter((b) => b.bot_name === selectedBot) : bots;
     const pnlMap = new Map<string, BotPnl>();
     for (const p of botPnls) pnlMap.set(p.bot_name, p);
-    let totalPnl = 0;
+
+    let wins = 0, losses = 0, pending = 0, totalTrades = 0, totalPnl = 0, totalFees = 0;
     for (const bot of targetBots) {
       const bp = pnlMap.get(bot.bot_name);
+      if (bp) {
+        wins += bp.wins;
+        losses += bp.losses;
+        pending += bp.pending;
+        totalTrades += bp.total_trades;
+        totalFees += bp.total_fees;
+      }
       const equity = bp?.current_balance ?? bot.balance;
       totalPnl += equity - bot.initial_balance;
     }
-    const decided = base.wins + base.losses;
-    return { ...base, pnl: totalPnl, avg: decided > 0 ? totalPnl / decided : 0 };
-  }, [settled, bots, botPnls, selectedBot]);
+    const decided = wins + losses;
+    const cancelled = Math.max(0, totalTrades - decided - pending);
+    const wr = decided > 0 ? ((wins / decided) * 100).toFixed(1) : '—';
+    const avg = decided > 0 ? totalPnl / decided : 0;
+    const wlRatio = losses > 0 ? (wins / losses).toFixed(2) : wins > 0 ? '∞' : '—';
+    return { wins, losses, cancelled, total: totalTrades, wr, pnl: totalPnl, avg, wlRatio };
+  }, [bots, botPnls, selectedBot]);
 
   // By Day — prefer ledger, fallback to trades
   const byDay = useMemo(() => {
@@ -674,55 +702,20 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
 
   // Filtered trades/bots for sub-components
   const filteredTrades = useMemo(
-    () => (selectedBot ? trades.filter((t) => t.bot_name === selectedBot) : trades),
-    [trades, selectedBot],
+    () => (selectedBot ? allTrades.filter((t) => t.bot_name === selectedBot) : allTrades),
+    [allTrades, selectedBot],
   );
   const filteredBots = useMemo(
     () => (selectedBot ? bots.filter((b) => b.bot_name === selectedBot) : bots),
     [bots, selectedBot],
   );
 
-  // Fetch ALL orders for the selected bot (dashboard only has 500 latest across all bots)
-  const [botAllTrades, setBotAllTrades] = useState<Trade[]>([]);
-  const [botAllTradesLoading, setBotAllTradesLoading] = useState(false);
-  const [botAllTradesName, setBotAllTradesName] = useState('');
-
-  useEffect(() => {
-    if (!selectedBot) {
-      setBotAllTrades([]);
-      setBotAllTradesName('');
-      return;
-    }
-    // Skip re-fetch if same bot
-    if (selectedBot === botAllTradesName && botAllTrades.length > 0) return;
-    let cancelled = false;
-    setBotAllTradesLoading(true);
-    fetchBotOrderHistory({ bot_name: selectedBot, limit: 5000 })
-      .then((res) => {
-        if (cancelled) return;
-        setBotAllTrades(res.orders);
-        setBotAllTradesName(selectedBot);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        // Fallback to filtered dashboard trades
-        setBotAllTrades([]);
-        setBotAllTradesName('');
-      })
-      .finally(() => { if (!cancelled) setBotAllTradesLoading(false); });
-    return () => { cancelled = true; };
-  }, [selectedBot]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Use fetched bot trades if available, else fallback to dashboard filtered trades
-  const tradesForHistory = selectedBot && botAllTradesName === selectedBot && botAllTrades.length > 0
-    ? botAllTrades
-    : filteredTrades;
 
   // Compare mode — compute data for each selected bot
   const botsCompareData: BotCompareData[] = useMemo(() => {
     if (!compareMode) return [];
     return compareBots.map((name) => {
-      const botSettled = trades.filter((t) => t.bot_name === name && t.result !== 'PENDING');
+      const botSettled = allTrades.filter((t) => t.bot_name === name && t.result !== 'PENDING');
       const color = BOT_PALETTE[botNames.indexOf(name) % BOT_PALETTE.length];
       return {
         name,
@@ -734,7 +727,7 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
         radarData: computeRadarData(botSettled),
       };
     });
-  }, [compareMode, compareBots, trades, botNames]);
+  }, [compareMode, compareBots, allTrades, botNames]);
 
   // Bots available to add in compare mode (not already selected)
   const availableForCompare = useMemo(
@@ -834,6 +827,10 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
         )}
       </div>
 
+      {allTradesLoading && (
+        <div className="text-center text-slate-500 text-xs py-1">Loading full trade data...</div>
+      )}
+
       {/* Compare Mode */}
       {compareMode && (
         <>
@@ -861,7 +858,7 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
 
           {/* Per-bot summary table (All Bots) */}
           {!selectedBot && bots.length > 1 && (
-            <BotSummaryTable trades={trades} bots={bots} botNames={botNames} botPnls={botPnls} balanceHistoryGrouped={balanceHistoryGrouped} />
+            <BotSummaryTable trades={allTrades} bots={bots} botNames={botNames} botPnls={botPnls} balanceHistoryGrouped={balanceHistoryGrouped} />
           )}
 
           {/* Achievements */}
@@ -1023,10 +1020,7 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
 
           {/* Open Positions & Trade History */}
           <PositionsTable trades={filteredTrades} bots={filteredBots} />
-          {botAllTradesLoading && selectedBot && (
-            <div className="card p-4 text-center text-slate-500 text-xs">Loading all orders for {selectedBot}...</div>
-          )}
-          <TradeHistory trades={tradesForHistory} bots={filteredBots} />
+          <TradeHistory key={selectedBot || '__all__'} bots={filteredBots} initialSettings={{ botFilter: selectedBot || '' }} />
         </>
       )}
     </main>

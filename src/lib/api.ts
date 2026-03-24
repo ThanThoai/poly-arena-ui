@@ -382,6 +382,23 @@ export async function fetchTradeHistory(filters: TradeHistoryFilters): Promise<T
   return { trades, total };
 }
 
+/** Fetch ALL trades via auto-pagination. */
+export async function fetchAllTrades(filters: Omit<TradeHistoryFilters, 'limit' | 'offset'> = {}): Promise<Trade[]> {
+  const PAGE_SIZE = 5000;
+  let offset = 0;
+  const allTrades: Trade[] = [];
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const result = await fetchTradeHistory({ ...filters, limit: PAGE_SIZE, offset });
+    allTrades.push(...result.trades);
+    if (allTrades.length >= result.total || result.trades.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+
+  return allTrades;
+}
+
 export interface BotOrderHistoryParams {
   bot_name: string;
   date_from?: string;   // YYYY-MM-DD

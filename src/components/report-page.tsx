@@ -662,11 +662,8 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
     return { wins, losses, cancelled, total: totalTrades, wr, pnl: totalPnl, avg, wlRatio };
   }, [bots, botPnls, selectedBot]);
 
-  // By Day — prefer ledger, fallback to trades
-  const byDay = useMemo(() => {
-    if (balanceHistoryGrouped.length > 0) return computeByDayFromLedger(balanceHistoryGrouped, selectedBot);
-    return computeByDayFromTrades(settled);
-  }, [settled, balanceHistoryGrouped, selectedBot]);
+  // By Day — always use all trades (ledger is capped at 100 settlement timestamps)
+  const byDay = useMemo(() => computeByDayFromTrades(settled), [settled]);
 
   // By ICT Session
   const bySession = useMemo(() => computeBySession(settled), [settled]);
@@ -1261,7 +1258,7 @@ function DailyReport({ rows, showBotColumn }: { rows: DayRow[]; showBotColumn: b
                           <td className="px-4 py-1.5 text-right text-slate-400 text-[11px]">{wr}</td>
                           <td className={`px-4 py-1.5 text-right text-[11px] font-medium ${pnlCls(b.pnl)}`}>{money(b.pnl)}</td>
                           <td className="px-4 py-1.5 text-right text-slate-600 text-[11px]">{b.fees > 0 ? money(b.fees) : '\u2014'}</td>
-                          <td className="px-4 py-1.5 text-right text-slate-600 text-[11px]">{b.sessions}s</td>
+                          <td className="px-4 py-1.5 text-right text-slate-600 text-[11px]">{b.sessions > 0 ? `${b.sessions}s` : '\u2014'}</td>
                         </tr>
                         {isBotExpanded && (
                           <BotDayOrders botName={b.bot_name} date={r.date} />

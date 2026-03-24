@@ -148,11 +148,11 @@ function computeByDayFromTrades(settled: Trade[]): DayRow[] {
     });
 }
 
-interface SessionRow { label: string; hours: string; wins: number; losses: number; cancelled: number; total: number; wr: string }
+interface SessionRow { label: string; hours: string; wins: number; losses: number; cancelled: number; total: number; pnl: number; wr: string }
 
 function computeBySession(settled: Trade[]): SessionRow[] {
-  const map: Record<string, { wins: number; losses: number; cancelled: number }> = {};
-  ICT_SESSIONS.forEach((s) => (map[s.label] = { wins: 0, losses: 0, cancelled: 0 }));
+  const map: Record<string, { wins: number; losses: number; cancelled: number; pnl: number }> = {};
+  ICT_SESSIONS.forEach((s) => (map[s.label] = { wins: 0, losses: 0, cancelled: 0, pnl: 0 }));
   settled.forEach((t) => {
     const d = parseUTC(t.created_at);
     if (!d) return;
@@ -160,6 +160,7 @@ function computeBySession(settled: Trade[]): SessionRow[] {
     if (t.result === 'WIN') map[session].wins++;
     else if (t.result === 'LOSS') map[session].losses++;
     else map[session].cancelled++;
+    map[session].pnl += (t.profit || 0) - (t.entry_fee || 0);
   });
   return ICT_SESSIONS.map((s) => {
     const v = map[s.label];
@@ -481,7 +482,7 @@ function CompareView({ botsData }: { botsData: BotCompareData[] }) {
                 <th className="px-4 py-2 text-left font-medium" rowSpan={2}>Session</th>
                 <th className="px-4 py-2 text-left font-medium" rowSpan={2}>Hours</th>
                 {botsData.map((b) => (
-                  <th key={b.name} className="px-2 py-2 text-right font-medium whitespace-nowrap" colSpan={2}>
+                  <th key={b.name} className="px-2 py-2 text-right font-medium whitespace-nowrap" colSpan={3}>
                     <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: b.color }} />
                     {b.name}
                   </th>
@@ -492,6 +493,7 @@ function CompareView({ botsData }: { botsData: BotCompareData[] }) {
                   <React.Fragment key={b.name}>
                     <th className="px-2 py-1 text-right font-medium">W/L</th>
                     <th className="px-2 py-1 text-right font-medium">WR</th>
+                    <th className="px-2 py-1 text-right font-medium">P&L</th>
                   </React.Fragment>
                 ))}
               </tr>
@@ -511,6 +513,7 @@ function CompareView({ botsData }: { botsData: BotCompareData[] }) {
                           <span className="text-emerald-400">{row.wins}</span>/<span className="text-rose-400">{row.losses}</span>
                         </td>
                         <td className="px-2 py-2 text-right text-slate-200">{row.wr}</td>
+                        <td className={`px-2 py-2 text-right font-semibold ${pnlCls(row.pnl)}`}>{money(row.pnl)}</td>
                       </React.Fragment>
                     );
                   })}
@@ -885,6 +888,7 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
                     <th className="px-4 py-2 text-right font-medium">W</th>
                     <th className="px-4 py-2 text-right font-medium">L</th>
                     <th className="px-4 py-2 text-right font-medium">WR</th>
+                    <th className="px-4 py-2 text-right font-medium">P&L</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -895,6 +899,7 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
                       <td className="px-4 py-2 text-right text-emerald-400">{r.wins}</td>
                       <td className="px-4 py-2 text-right text-rose-400">{r.losses}</td>
                       <td className="px-4 py-2 text-right font-semibold text-slate-200">{r.wr}</td>
+                      <td className={`px-4 py-2 text-right font-semibold ${pnlCls(r.pnl)}`}>{money(r.pnl)}</td>
                     </tr>
                   ))}
                 </tbody>

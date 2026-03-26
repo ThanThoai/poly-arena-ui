@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { SchedulerStatus, Bot, Trade } from '@/lib/api';
+import { SchedulerStatus, Bot, Trade, FeedMode } from '@/lib/api';
 
 export type MarketType = 'prediction' | 'future';
 
@@ -17,9 +17,11 @@ interface HeaderProps {
   onMarketChange?: (market: MarketType) => void;
   bots?: Bot[];
   trades?: Trade[];
+  feedMode?: FeedMode;
+  onFeedChange?: (mode: FeedMode) => void;
 }
 
-export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiExample, onCreateBot, activeTab = 'dashboard', onTabChange, activeMarket = 'prediction', onMarketChange, bots = [], trades = [] }: HeaderProps) {
+export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiExample, onCreateBot, activeTab = 'dashboard', onTabChange, activeMarket = 'prediction', onMarketChange, bots = [], trades = [], feedMode = 'all', onFeedChange }: HeaderProps) {
   const [spinning, setSpinning] = useState(false);
   const [schedLabel, setSchedLabel] = useState('\u2026');
   const nextRunRef = useRef<number | null>(null);
@@ -55,6 +57,12 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
     { key: 'dashboard', label: 'Dashboard' },
     { key: 'report', label: 'Report' },
     { key: 'bots', label: 'Bot Manager' },
+  ];
+
+  const feedTabs: Array<{ key: FeedMode; label: string }> = [
+    { key: 'all', label: 'All' },
+    { key: 'rest', label: 'REST API' },
+    { key: 'ws', label: 'WS Feed' },
   ];
 
   return (
@@ -106,6 +114,25 @@ export default function Header({ schedulerStatus, lastUpdated, onRefresh, onApiE
                   {t.label}
                 </button>
               ))}
+          </div>
+        )}
+
+        {/* Feed mode sub-tabs: only visible on Prediction Market > Dashboard */}
+        {activeMarket === 'prediction' && activeTab === 'dashboard' && onFeedChange && (
+          <div className="flex items-center gap-0.5 ml-1 p-0.5 rounded-md bg-[#0d0d1a] border border-[#1a1a2e]">
+            {feedTabs.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => onFeedChange(f.key)}
+                className={`h-6 px-2.5 rounded text-[10px] font-semibold transition-all ${
+                  feedMode === f.key
+                    ? 'bg-[#1e2540] text-[#7b9fff] border border-[#2a3a6a]'
+                    : 'text-slate-600 hover:text-slate-400 border border-transparent'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
           </div>
         )}
 

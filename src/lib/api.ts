@@ -111,6 +111,9 @@ export interface Trade {
   requested_quantity: number | null;
   filled_quantity: number | null;
   unfilled_quantity: number | null;
+  // Dual-mode fill source
+  fill_source: string | null;   // 'REST' | 'WS'
+  pair_id: number | null;
 }
 
 export interface Bot {
@@ -120,11 +123,20 @@ export interface Bot {
   is_active?: boolean;
   status: string;
   balance: number;
+  balance_rest: number | null;
+  balance_ws: number | null;
   initial_balance: number;
   user_id?: number | null;
   owner_name?: string | null;
   user_initial_balance?: number | null;
   created_at: string | null;
+}
+
+export type FeedMode = 'all' | 'rest' | 'ws';
+
+export interface DualModeResponse {
+  rest_order: Trade | null;
+  ws_order: Trade | null;
 }
 
 export interface BalanceHistory {
@@ -146,6 +158,7 @@ export interface BotBalanceEntry {
   trade_count: number | null;
   win_count: number | null;
   loss_count: number | null;
+  fill_source: string | null;   // 'REST' | 'WS'
 }
 
 /** Balance history grouped by settlement timestamp. */

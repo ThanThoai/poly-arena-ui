@@ -12,7 +12,7 @@ import {
 } from 'chart.js';
 import { Radar } from 'react-chartjs-2';
 import type { ChartOptions } from 'chart.js';
-import { Trade, Bot, BotPnl, BalanceHistoryGrouped, BotAchievement, fetchBotOrderHistory, fetchAllTrades } from '@/lib/api';
+import { Trade, Bot, BotPnl, BalanceHistoryGrouped, BotAchievement, fetchBotOrderHistory, fetchAllTrades, FeedMode } from '@/lib/api';
 import { BOT_PALETTE, money, pnlCls, parseUTC } from '@/lib/helpers';
 import CustomSelect from '@/components/ui/custom-select';
 import PositionsTable from '@/components/positions-table';
@@ -605,11 +605,18 @@ interface ReportPageProps {
   botAchievements?: Record<number, BotAchievement[]>;
 }
 
+const FEED_TABS: { key: FeedMode; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'rest', label: 'REST API' },
+  { key: 'ws', label: 'WS Feed' },
+];
+
 export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryGrouped = [], botAchievements = {} }: ReportPageProps) {
   const botNames = useMemo(() => bots.map((b) => b.bot_name).sort(), [bots]);
   const [selectedBot, setSelectedBot] = useState('');
   const [compareMode, setCompareMode] = useState(false);
   const [compareBots, setCompareBots] = useState<string[]>([]);
+  const [feedMode, setFeedMode] = useState<FeedMode>('all');
 
   // Fetch ALL trades for breakdown metrics (bySession, byTimeframe, radar, etc.)
   const [allTrades, setAllTrades] = useState<Trade[]>(trades);
@@ -629,9 +636,15 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
     return () => { cancelled = true; };
   }, []); // fetch once on mount
 
+  // Filter trades by feed mode
+  const feedFilteredTrades = useMemo(
+    () => feedMode === 'all' ? allTrades : allTrades.filter(t => t.fill_source === feedMode.toUpperCase()),
+    [allTrades, feedMode],
+  );
+
   const botTrades = useMemo(
-    () => (selectedBot ? allTrades.filter((t) => t.bot_name === selectedBot) : allTrades),
-    [allTrades, selectedBot],
+    () => (selectedBot ? feedFilteredTrades.filter((t) => t.bot_name === selectedBot) : feedFilteredTrades),
+    [feedFilteredTrades, selectedBot],
   );
   const settled = useMemo(() => botTrades.filter((t) => t.result !== 'PENDING'), [botTrades]);
 
@@ -651,7 +664,10 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
         totalTrades += bp.total_trades;
         totalFees += bp.total_fees;
       }
-      const equity = bp?.current_balance ?? bot.balance;
+      const feedBalance = feedMode === 'ws' ? (bot.balance_ws ?? bot.balance)
+        : feedMode === 'rest' ? (bot.balance_rest ?? bot.balance)
+        : bot.balance;
+      const equity = bp?.current_balance ?? feedBalance;
       totalPnl += equity - bot.initial_balance;
     }
     const decided = wins + losses;
@@ -660,7 +676,7 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
     const avg = decided > 0 ? totalPnl / decided : 0;
     const wlRatio = losses > 0 ? (wins / losses).toFixed(2) : wins > 0 ? '∞' : '—';
     return { wins, losses, cancelled, total: totalTrades, wr, pnl: totalPnl, avg, wlRatio };
-  }, [bots, botPnls, selectedBot]);
+  }, [bots, botPnls, selectedBot, feedMode]);
 
   // By Day — always use all trades (ledger is capped at 100 settlement timestamps)
   const byDay = useMemo(() => computeByDayFromTrades(settled), [settled]);
@@ -702,8 +718,8 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
 
   // Filtered trades/bots for sub-components
   const filteredTrades = useMemo(
-    () => (selectedBot ? allTrades.filter((t) => t.bot_name === selectedBot) : allTrades),
-    [allTrades, selectedBot],
+    () => (selectedBot ? feedFilteredTrades.filter((t) => t.bot_name === selectedBot) : feedFilteredTrades),
+    [feedFilteredTrades, selectedBot],
   );
   const filteredBots = useMemo(
     () => (selectedBot ? bots.filter((b) => b.bot_name === selectedBot) : bots),
@@ -715,7 +731,7 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
   const botsCompareData: BotCompareData[] = useMemo(() => {
     if (!compareMode) return [];
     return compareBots.map((name) => {
-      const botSettled = allTrades.filter((t) => t.bot_name === name && t.result !== 'PENDING');
+      const botSettled = feedFilteredTrades.filter((t) => t.bot_name === name && t.result !== 'PENDING');
       const color = BOT_PALETTE[botNames.indexOf(name) % BOT_PALETTE.length];
       return {
         name,
@@ -727,7 +743,7 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
         radarData: computeRadarData(botSettled),
       };
     });
-  }, [compareMode, compareBots, allTrades, botNames]);
+  }, [compareMode, compareBots, feedFilteredTrades, botNames]);
 
   // Bots available to add in compare mode (not already selected)
   const availableForCompare = useMemo(
@@ -770,6 +786,22 @@ export default function ReportPage({ trades, bots, botPnls = [], balanceHistoryG
               searchable
               minWidth="180px"
             />
+            {/* Feed mode toggle */}
+            <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-[#0d0d1a] border border-[#1a1a2e]">
+              {FEED_TABS.map((f) => (
+                <button
+                  key={f.key}
+                  onClick={() => setFeedMode(f.key)}
+                  className={`h-6 px-2.5 rounded text-[10px] font-semibold transition-all ${
+                    feedMode === f.key
+                      ? 'bg-[#1e2540] text-[#7b9fff] border border-[#2a3a6a]'
+                      : 'text-slate-600 hover:text-slate-400 border border-transparent'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
             {botNames.length >= 2 && (
               <button
                 onClick={handleEnterCompare}

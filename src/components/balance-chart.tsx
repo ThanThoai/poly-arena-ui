@@ -14,7 +14,7 @@ import {
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import type { ChartOptions, Plugin } from 'chart.js';
-import { Bot, BotPnl, BalanceHistory, BalanceHistoryGrouped, Trade } from '@/lib/api';
+import { Bot, BotPnl, BalanceHistory, BalanceHistoryGrouped, Trade, FeedMode } from '@/lib/api';
 import { BOT_PALETTE, compact, parseUTC, pnlCls } from '@/lib/helpers';
 import type { BalanceChartSettings } from '@/lib/settings-types';
 
@@ -26,6 +26,7 @@ interface BalanceChartProps {
   balanceHistory: BalanceHistory[];
   balanceHistoryGrouped: BalanceHistoryGrouped[];
   trades: Trade[];
+  feedMode?: FeedMode;
   initialSettings?: BalanceChartSettings;
   onSettingsChange?: (s: BalanceChartSettings) => void;
 }
@@ -41,7 +42,6 @@ const endLabelPlugin: Plugin<'line'> = {
     const labels: { x: number; y: number; label: string; val: string; pct: string; pctColor: string; color: string }[] = [];
     chart.data.datasets.forEach((ds, i) => {
       if (!ds.data || !ds.data.length) return;
-      if ((ds as any).borderDash) return;
       const meta = chart.getDatasetMeta(i);
       if (meta.hidden) return;
       const last = meta.data[meta.data.length - 1];
@@ -165,7 +165,7 @@ const crosshairPlugin: Plugin<'line'> = {
 
 export default function BalanceChart({
   bots, botPnls, balanceHistory, balanceHistoryGrouped, trades,
-  initialSettings, onSettingsChange,
+  feedMode = 'all', initialSettings, onSettingsChange,
 }: BalanceChartProps) {
   const [balanceTf, setBalanceTf] = useState(initialSettings?.timeframe ?? 'M5');
   const [botFilter, setBotFilter] = useState<Set<string>>(new Set());
@@ -212,19 +212,27 @@ export default function BalanceChart({
     const aggMeta = new Map<string, Map<number, AggMeta>>();
 
     if (balanceHistoryGrouped.length > 0) {
-      // Per bot: aggregate multiple entries at the same timestamp into one point
-      // The entries within a group are chained, so the LAST new_balance is the final balance.
+      // Per bot(+source): aggregate entries at the same timestamp into one point.
+      // When feedMode is 'all', create separate lines per source: "bot (REST)" / "bot (WS)".
+      // When feedMode is 'rest' or 'ws', filter to that source only.
       const botTimeline = new Map<string, Map<number, { balance: number; meta: AggMeta }>>();
 
       for (const group of balanceHistoryGrouped) {
         const ts = parseUTC(group.settled_at)?.getTime();
         if (!ts) continue;
         for (const entry of group.bots) {
-          if (!botTimeline.has(entry.bot_name)) botTimeline.set(entry.bot_name, new Map());
-          const timeline = botTimeline.get(entry.bot_name)!;
+          const src = entry.fill_source ?? 'REST';
+          // Filter by feedMode
+          if (feedMode === 'rest' && src !== 'REST') continue;
+          if (feedMode === 'ws' && src !== 'WS') continue;
+
+          // When feedMode='all', use suffixed key to create separate lines
+          const lineKey = feedMode === 'all' ? `${entry.bot_name} (${src})` : entry.bot_name;
+
+          if (!botTimeline.has(lineKey)) botTimeline.set(lineKey, new Map());
+          const timeline = botTimeline.get(lineKey)!;
           const existing = timeline.get(ts);
           if (existing) {
-            // Same bot, same timestamp — aggregate (balance chains, so take latest)
             existing.balance = entry.new_balance;
             existing.meta.delta += entry.delta;
             existing.meta.total_profit += entry.total_profit;
@@ -250,12 +258,18 @@ export default function BalanceChart({
         }
       }
 
-      for (const botName of visibleBots) {
-        const bot = bots.find((b) => b.bot_name === botName);
+      // Build chart lines — when feedMode='all', iterate timeline keys (suffixed)
+      const lineKeys = feedMode === 'all'
+        ? [...botTimeline.keys()].filter(k => visibleBots.some(b => k.startsWith(b)))
+        : visibleBots;
+
+      for (const lineKey of lineKeys) {
+        const baseName = feedMode === 'all' ? lineKey.replace(/ \((REST|WS)\)$/, '') : lineKey;
+        const bot = bots.find((b) => b.bot_name === baseName);
         const initBal = bot?.initial_balance ?? 0;
         if (!initBal) continue;
 
-        const timeline = botTimeline.get(botName);
+        const timeline = botTimeline.get(lineKey);
         if (!timeline || timeline.size === 0) continue;
 
         // Sort by timestamp
@@ -272,8 +286,8 @@ export default function BalanceChart({
           if (Math.abs(data[i].y - data[i - 1].y) > 0.005) changeIdx.add(i);
         }
 
-        result.set(botName, { data, changeIdx, initBal, lastBalance });
-        aggMeta.set(botName, metaMap);
+        result.set(lineKey, { data, changeIdx, initBal, lastBalance });
+        aggMeta.set(lineKey, metaMap);
       }
     } else {
       // Fallback to legacy flat balanceHistory
@@ -305,32 +319,62 @@ export default function BalanceChart({
       }
     }
     return { botBinnedData: result, aggregatedMeta: aggMeta };
-  }, [visibleBots, bots, balanceHistory, balanceHistoryGrouped, tEnd]);
+  }, [visibleBots, bots, balanceHistory, balanceHistoryGrouped, tEnd, feedMode]);
 
   // ── Bot Balance datasets ──────────────────────────────────────────────
+  const chartLineKeys = useMemo(() => [...botBinnedData.keys()], [botBinnedData]);
+
+  // Map base bot name → palette color index (same bot = same base color)
+  const botColorMap = useMemo(() => {
+    const m = new Map<string, number>();
+    let idx = 0;
+    for (const key of chartLineKeys) {
+      const base = key.replace(/ \((REST|WS)\)$/, '');
+      if (!m.has(base)) m.set(base, idx++);
+    }
+    return m;
+  }, [chartLineKeys]);
+
   const botBalanceDatasets = useMemo(() => {
-    const ds = visibleBots.map((botName, idx) => {
-      const binned = botBinnedData.get(botName);
+    const ds = chartLineKeys.map((lineKey) => {
+      const binned = botBinnedData.get(lineKey);
       if (!binned) return null;
       const { data: rawData, changeIdx, initBal } = binned;
-      const color = BOT_PALETTE[idx % BOT_PALETTE.length];
-      const bp = botPnlMap.get(botName);
+      const baseName = lineKey.replace(/ \((REST|WS)\)$/, '');
+      const colorIdx = botColorMap.get(baseName) ?? 0;
+      const baseColor = BOT_PALETTE[colorIdx % BOT_PALETTE.length];
+      const bp = botPnlMap.get(baseName);
+
+      const isWsLine = lineKey.endsWith('(WS)');
+      const isRestLine = lineKey.endsWith('(REST)');
+
+      // In 'all' mode: REST = solid base color, WS = dashed + lighter shade
+      const color = isWsLine ? baseColor + 'cc' : baseColor;
+
+      // Clear label: "botname [REST]" or "botname [WS]"
+      let displayLabel = lineKey;
+      if (feedMode === 'rest') displayLabel = `${baseName} [REST]`;
+      else if (feedMode === 'ws') displayLabel = `${baseName} [WS]`;
+      else if (isRestLine) displayLabel = `${baseName} [REST]`;
+      else if (isWsLine) displayLabel = `${baseName} [WS]`;
 
       const data = rawData.map((pt) => ({ x: pt.x, y: +pt.y.toFixed(2) }));
       const lastIdx = data.length - 1;
       return {
-        label: botName,
+        label: displayLabel,
         data,
         borderColor: color,
         backgroundColor: color + '33',
-        borderWidth: 1.8,
+        borderWidth: isWsLine ? 1.5 : 1.8,
+        borderDash: isWsLine ? [6, 3] : [],
         tension: 0.35,
         cubicInterpolationMode: 'monotone' as const,
         fill: false,
         initBalance: initBal,
         realizedPnl: bp?.realized_pnl ?? 0,
+        isWsLine,
         pointRadius: data.map((_: any, i: number) =>
-          i === 0 || i === lastIdx ? 5 : 0
+          i === 0 || i === lastIdx ? (isWsLine ? 4 : 5) : 0
         ),
         pointHoverRadius: data.map((_: any, i: number) =>
           i === 0 || i === lastIdx ? 7 : 0
@@ -338,10 +382,11 @@ export default function BalanceChart({
         pointBackgroundColor: color,
         pointBorderColor: '#07070d',
         pointBorderWidth: 1.5,
+        pointStyle: isWsLine ? 'rectRot' as const : 'circle' as const,
       };
     }).filter(Boolean) as any[];
     return ds;
-  }, [visibleBots, botBinnedData, botPnlMap]);
+  }, [chartLineKeys, botBinnedData, botPnlMap, botColorMap, feedMode]);
 
   const activeDatasets = botBalanceDatasets;
 
@@ -349,7 +394,6 @@ export default function BalanceChart({
     let yMin = Infinity;
     let yMax = -Infinity;
     for (const ds of activeDatasets) {
-      if ((ds as any).borderDash) continue;
       for (const pt of ds.data as { y: number }[]) {
         if (pt.y < yMin) yMin = pt.y;
         if (pt.y > yMax) yMax = pt.y;

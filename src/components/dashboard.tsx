@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useDashboardData } from '@/hooks/use-trades';
 import { useSettings } from '@/hooks/use-settings';
 import Header from '@/components/header';
@@ -21,6 +21,7 @@ import BotManagerPage from '@/components/bot-manager-page';
 import FutureMarketPage from '@/components/future-market-page';
 import Toast from '@/components/ui/toast';
 import { MarketType } from '@/components/header';
+import type { FeedMode } from '@/lib/api';
 
 export default function Dashboard() {
   const { data, loading, refresh } = useDashboardData(30_000);
@@ -35,6 +36,7 @@ export default function Dashboard() {
   const [activeMarket, setActiveMarket] = useState<MarketType>('prediction');
   const [botRefreshKey, setBotRefreshKey] = useState(0);
   const [sessionOffset, setSessionOffset] = useState(0);
+  const [feedMode, setFeedMode] = useState<FeedMode>('all');
 
   const [lastUpdated, setLastUpdated] = useState('');
 
@@ -72,6 +74,11 @@ export default function Dashboard() {
   const schedulerStatus = data?.schedulerStatus ?? null;
   const botAchievements = data?.botAchievements ?? {};
 
+  // Filter trades by feed mode
+  const feedTrades = feedMode === 'all'
+    ? trades
+    : trades.filter(t => t.fill_source === feedMode.toUpperCase());
+
   return (
     <>
       <Header
@@ -86,6 +93,8 @@ export default function Dashboard() {
         onMarketChange={setActiveMarket}
         bots={bots}
         trades={trades}
+        feedMode={feedMode}
+        onFeedChange={setFeedMode}
       />
 
       {activeMarket === 'future' ? (
@@ -106,14 +115,15 @@ export default function Dashboard() {
         />
       ) : (
         <main className="max-w-[1900px] mx-auto px-5 py-5 space-y-5">
-          <KpiCards trades={trades} bots={bots} botPnls={data?.botPnls ?? []} balanceHistoryGrouped={balanceHistoryGrouped} />
+          <KpiCards trades={feedTrades} bots={bots} botPnls={data?.botPnls ?? []} balanceHistoryGrouped={balanceHistoryGrouped} />
 
           <BalanceChart
             bots={bots}
             botPnls={data?.botPnls ?? []}
             balanceHistory={balanceHistory}
             balanceHistoryGrouped={balanceHistoryGrouped}
-            trades={trades}
+            trades={feedTrades}
+            feedMode={feedMode}
             initialSettings={settings.balanceChart}
             onSettingsChange={(s) => updateSettings({ balanceChart: s })}
           />
@@ -131,7 +141,7 @@ export default function Dashboard() {
           </div>
 
           <PositionsTable
-            trades={trades}
+            trades={feedTrades}
             bots={bots}
             sessionOffset={sessionOffset}
             initialSettings={settings.positions}

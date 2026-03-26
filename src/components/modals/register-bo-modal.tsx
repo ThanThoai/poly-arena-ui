@@ -61,13 +61,14 @@ export default function RegisterBoModal({ open, onClose, onCreated }: RegisterBo
       if (reason.trim()) body.reason = reason.trim();
       if (ttl) body.ttl = parseInt(ttl);
 
-      await apiFetch('/binary-options', {
+      const res = await apiFetch<{ rest_order?: unknown; ws_order?: unknown }>('/binary-options', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey.trim() },
         body: JSON.stringify(body),
       });
       handleClose();
-      showToast('Trade registered', 'ok');
+      const isDual = res.ws_order != null;
+      showToast(isDual ? 'Trade registered (REST + WS)' : 'Trade registered', 'ok');
       onCreated();
     } catch (ex) {
       setError(ex instanceof Error ? ex.message : 'Unknown error');

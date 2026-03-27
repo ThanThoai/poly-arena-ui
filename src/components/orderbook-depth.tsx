@@ -6,10 +6,10 @@ import { OrderbookLevel, VolumeBar, fetchSessionVolume } from '@/lib/api';
 import SymbolBadge from '@/components/ui/symbol-badge';
 import type { OrderbookSettings } from '@/lib/settings-types';
 
-const SYMBOLS = ['BTC', 'ETH', 'SOL', 'XRP'];
-const TIMEFRAMES = ['M5', 'M15', 'H1'];
+const SYMBOLS = ['BTC'];
+const TIMEFRAMES = ['M5', 'M15'];
 
-const TF_SECONDS: Record<string, number> = { M5: 300, M15: 900, H1: 3600 };
+const TF_SECONDS: Record<string, number> = { M5: 300, M15: 900 };
 
 /** Format a Unix timestamp as session time in the client's local timezone.
  *  Examples: 10h, 10h05, 10h15, 11h */
